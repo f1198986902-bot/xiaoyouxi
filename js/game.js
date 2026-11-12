@@ -515,6 +515,15 @@
     var epoch = D.SEASON_EPOCH_MS || Date.UTC(2025, 11, 31, 16, 0, 0);
     return epoch + idx * (D.ARENA_SEASON_MS || 1296000000);
   }
+  function levelCapOf(u) {
+    if (u && u.promoted) return D.EFFECTIVE_LEVEL_CAP || 40;
+    return D.LEVEL_CAP || 20;
+  }
+  function foeCapForLevel(lv) {
+    lv = lv || 1;
+    return lv >= 21 ? (D.EFFECTIVE_LEVEL_CAP || 40) : (D.LEVEL_CAP || 20);
+  }
+
   function newUnit(name, classId, id) {
     var cls = D.CLASSES[classId];
     var b = cls.bases;
@@ -554,7 +563,12 @@
     var u = newUnit(cls.name, classId, givenId || classId);
     if (!raw) return u;
     if (raw.name) u.name = String(raw.name).slice(0, 8);
-    if (typeof raw.level === "number") u.level = C.clamp(Math.floor(raw.level), 1, D.LEVEL_CAP);
+    u.promoted = !!raw.promoted;
+    if (typeof raw.level === "number") {
+      var savedLv = Math.floor(raw.level);
+      if (u.promoted && savedLv < 21) savedLv += 20;
+      u.level = C.clamp(savedLv, 1, levelCapOf(u));
+    }
     if (typeof raw.exp === "number") u.exp = Math.max(0, Math.floor(raw.exp));
     ["maxHp", "hp", "str", "skill", "spd", "luck", "def"].forEach(function (k) {
       if (typeof raw[k] === "number") u[k] = Math.max(0, Math.floor(raw[k]));
@@ -569,8 +583,7 @@
     u.weaponUses = normalizeWeaponUses(u, raw && raw.weaponUses);
     if (u.maxHp < 1) u.maxHp = cls.bases.hp;
     if (u.hp > u.maxHp) u.hp = u.maxHp;
-    if (u.level >= D.LEVEL_CAP) u.exp = 0;
-    u.promoted = !!raw.promoted;
+    if (u.level >= levelCapOf(u)) u.exp = 0;
     u.dungeonLockUntil = migrateDungeonTimes(raw.dungeonLockUntil);
     u.dungeonFoughtUntil = migrateDungeonTimes(raw.dungeonFoughtUntil);
     u.arenaFoughtUntil = typeof raw.arenaFoughtUntil === "number" ? raw.arenaFoughtUntil : 0;
@@ -761,7 +774,9 @@
 
   function effectiveLevel(u) {
     var lv = u && u.level ? u.level : 1;
-    if (u && u.promoted) lv += 20;
+    var cap = D.EFFECTIVE_LEVEL_CAP || 40;
+    if (lv < 1) lv = 1;
+    if (lv > cap) lv = cap;
     return lv;
   }
 
@@ -1032,7 +1047,7 @@
   function generateGuildQuest(day, playerLevel) {
     var roll = C.createRng(C.seededRandom(day * 8191 + 99));
     var cid = D.CLASS_ORDER[roll.int(0, D.CLASS_ORDER.length - 1)];
-    var lv = C.clamp(playerLevel + 1, 1, D.LEVEL_CAP);
+    var lv = C.clamp(playerLevel + 1, 1, foeCapForLevel(playerLevel));
     var names = D.ENEMY_NAMES[cid];
     var name = names[roll.int(0, names.length - 1)];
     var wId = lv >= 5 ? steelFor(cid) : D.CLASSES[cid].startingWeapon;
@@ -1049,8 +1064,8 @@
     var levels = [
       Math.max(1, playerLevel - 1),
       playerLevel,
-      Math.min(D.LEVEL_CAP, playerLevel + 1),
-      Math.min(D.LEVEL_CAP, playerLevel + 2)
+      Math.min(foeCapForLevel(playerLevel), playerLevel + 1),
+      Math.min(foeCapForLevel(playerLevel), playerLevel + 2)
     ];
     var wagers = [50, 80, 110, 150];
     var used = {};
@@ -1430,7 +1445,7 @@
     var cid = D.CLASS_ORDER[roll.int(0, D.CLASS_ORDER.length - 1)];
     var names = D.ENEMY_NAMES[cid];
     var name = names[roll.int(0, names.length - 1)];
-    var lv = C.clamp(p.level + roll.int(-1, 2), 1, D.LEVEL_CAP);
+    var lv = C.clamp(p.level + roll.int(-1, 2), 1, foeCapForLevel(p.level));
     var wId = lv >= 6 ? steelFor(cid) : D.CLASSES[cid].startingWeapon;
     return rollUnit(cid, lv, roll, name, wId);
   }
@@ -1442,11 +1457,11 @@
 
   function gainExpFor(p, amount) {
     var events = [];
-    if (!p || p.level >= D.LEVEL_CAP || amount <= 0) return events;
+    if (!p || p.level >= levelCapOf(p) || amount <= 0) return events;
     p.exp += amount;
     var roll = rng();
     var growths = D.CLASSES[p.classId].growths;
-    while (p.exp >= D.EXP_PER_LEVEL && p.level < D.LEVEL_CAP) {
+    while (p.exp >= D.EXP_PER_LEVEL && p.level < levelCapOf(p)) {
       p.exp -= D.EXP_PER_LEVEL;
       p.level += 1;
       var unit = { hp: p.maxHp, str: p.str, skill: p.skill, spd: p.spd, luck: p.luck, def: p.def };
@@ -1461,7 +1476,7 @@
       p.def = r.after.def;
       events.push(r);
     }
-    if (p.level >= D.LEVEL_CAP) p.exp = 0;
+    if (p.level >= levelCapOf(p)) p.exp = 0;
     return events;
   }
 
@@ -1479,7 +1494,7 @@
 
   function grantOneLevel() {
     var p = active();
-    if (p.level >= D.LEVEL_CAP) return [];
+    if (p.level >= levelCapOf(p)) return [];
     p.level += 1;
     var unit = { hp: p.maxHp, str: p.str, skill: p.skill, spd: p.spd, luck: p.luck, def: p.def };
     var r = C.applyLevelUp(unit, D.CLASSES[p.classId].growths, rng());
@@ -1490,7 +1505,7 @@
     p.spd = r.after.spd;
     p.luck = r.after.luck;
     p.def = r.after.def;
-    if (p.level >= D.LEVEL_CAP) p.exp = 0;
+    if (p.level >= levelCapOf(p)) p.exp = 0;
     return [r];
   }
 
@@ -1757,7 +1772,7 @@
     var cls = D.CLASSES[p.classId];
     var hpPct = Math.round((p.hp / Math.max(1, p.maxHp)) * 100);
     var expLine =
-      p.level >= D.LEVEL_CAP
+      p.level >= levelCapOf(p)
         ? t("hud.levelCap")
         : "EXP " + p.exp + "/" + D.EXP_PER_LEVEL;
     var rate = goldRate();
@@ -2724,12 +2739,30 @@
           t("ui.ok") +
           "</button>") +
       "</div>";
+    var tome = D.ITEMS.promoBook;
+    var tomePoor = state.gold < tome.cost;
+    var tomeRow =
+      '<div class="list-item shop-item"><div class="info"><h4>' +
+      itemName("promoBook") +
+      "</h4><p>" +
+      t("shop.tomeLead") +
+      (tomePoor ? "　" + t("goldShort") : "") +
+      '</p></div><span class="price">' +
+      tome.cost +
+      "</span>" +
+      (tomePoor
+        ? ""
+        : '<button type="button" class="btn" data-act="buy-item" data-id="promoBook">' +
+          t("ui.ok") +
+          "</button>") +
+      "</div>";
     var body =
       "<p class='lead'>" + t("shop.lead") + "</p>" +
       "<p>" + esc(displayName(p)) + "　" + classNameOf(p) + "</p>" +
       '<div class="shop-list">' +
       rows +
       writRow +
+      tomeRow +
       "</div>" +
       actions({ leave: t("ui.leave") });
     openModal(panel(t("shop.title"), body));
@@ -2882,7 +2915,7 @@
   function openTraining() {
     var p = active();
     var cls = D.CLASSES[p.classId];
-    var atCap = p.level >= D.LEVEL_CAP;
+    var atCap = p.level >= levelCapOf(p);
     var cost = trainFee(effectiveLevel(p));
     var poor = !atCap && state.gold < cost;
     var rows = STAT_KEYS.map(function (k) {
@@ -2901,8 +2934,8 @@
     if (atCap) note = "<p class='warn-text'>" + t("train.cap") + "</p>";
     else if (poor) note = "<p class='warn-text'>" + t("train.poor") + "</p>";
     var costLine = atCap
-      ? "<p>" + t("train.atCap", { cap: D.LEVEL_CAP }) + "</p>"
-      : "<p>" + t("train.nextCostBonus", { lv: p.level, cost: formatGold(cost) }) + "</p>" +
+      ? "<p>" + t("train.atCap", { cap: levelCapOf(p) }) + "</p>"
+      : "<p>" + t("train.nextCostBonus", { lv: effectiveLevel(p), cost: formatGold(cost) }) + "</p>" +
         "<p>" + t("train.payback", { days: formatGold(paybackDays(effectiveLevel(p))) }) + "</p>" +
         "<p class='muted'>" + t("train.goldBonus") + "</p>";
     var body =
@@ -2938,7 +2971,7 @@
   function trainingList() {
     var p = active();
     var coachLv = Math.max(1, p.level);
-    var vetLv = Math.min(D.LEVEL_CAP, p.level + 2);
+    var vetLv = Math.min(foeCapForLevel(p.level), p.level + 2);
     return [
       {
         id: "dummy",
@@ -2991,7 +3024,7 @@
       var lv = Math.max(1, p.level);
       return { id: "coach", fee: 50, exp: 35, unit: rollUnit("sword", lv, roll, "教练", "iron-sword") };
     }
-    var vLv = Math.min(D.LEVEL_CAP, p.level + 2);
+    var vLv = Math.min(foeCapForLevel(p.level), p.level + 2);
     var w = p.level >= 6 ? "steel-lance" : "iron-lance";
     return {
       id: "veteran",
@@ -3208,7 +3241,7 @@
       t("stats.level") +
       " " +
       p.level +
-      (p.level >= D.LEVEL_CAP ? t("ui.cap") : "　" + t("stats.exp") + " " + p.exp + "/" + D.EXP_PER_LEVEL) +
+      (p.level >= levelCapOf(p) ? t("ui.cap") : "　" + t("stats.exp") + " " + p.exp + "/" + D.EXP_PER_LEVEL) +
       "</p>" +
       (classBonusLine(p.classId) ? "<p>" + classBonusLine(p.classId) + "</p>" : "") +
       "<table class='stat-table'><thead><tr><th></th><th>" +
@@ -4086,7 +4119,7 @@
     }
     if (act === "train-up") {
       p = active();
-      if (p.level >= D.LEVEL_CAP) {
+      if (p.level >= levelCapOf(p)) {
         toast(t("train.capToast"));
         return;
       }
@@ -4277,7 +4310,7 @@
       }
     }
     u.promoted = true;
-    u.level = 1;
+    u.level = 21;
     u.exp = 0;
     return true;
   }

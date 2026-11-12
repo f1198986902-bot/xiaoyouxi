@@ -126,7 +126,7 @@
 
   var ITEMS = {
     tonic: { id: "tonic", name: "休息药", cost: 80, hp: 10, desc: "恢复 10 点生命。药味苦，却能把人从边缘拉回来。" },
-    promoBook: { id: "promoBook", name: "转职书", cost: 0, desc: "等级达到 10 的同伴可用来转职。转职后等级回到 1，并获得属性加成。" },
+    promoBook: { id: "promoBook", name: "转职书", cost: 500, desc: "等级达到 10 的下位职业可转职为上位职业。转职后等级变为 21，属性提升，金币产出也随之提高。" },
     challengeWrit: { id: "challengeWrit", name: "挑战书", cost: 100, desc: "若当前同伴今日已在竞技场出战，使用后可再战一次。" }
   };
 
