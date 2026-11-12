@@ -20,6 +20,10 @@
   function statLabel(key) {
     return t("stat." + key);
   }
+  function promotedNameOf(person) {
+    var promo = person && person.promoted && person.classId && D.PROMOTIONS[person.classId];
+    return promo ? t("promo." + promo.id) : "";
+  }
   function classNameOf(person) {
     if (!person) return "";
     if (typeof person === "string") {
@@ -28,7 +32,9 @@
     }
     if (person.weapon && person.weapon.type === "train") return t("arena.dummy");
     if (person.className === "训练器具" || person.className === "Training Dummy") return t("arena.dummy");
-    if (person.classId && D.CLASSES[person.classId]) return t("class." + person.classId);
+    if (person.classId && D.CLASSES[person.classId]) {
+      return promotedNameOf(person) || t("class." + person.classId);
+    }
     return person.className || "";
   }
   function weaponName(w) {
@@ -47,7 +53,7 @@
     if (typeof person === "string") return person;
     var n = person.name || "";
     var cid = person.classId;
-    if (n === "石门骑士 柯刚" || n === "Stonegate Knight Kegang") return t("boss.name");
+    if (n === "石门骑士 柯刚" || n === "Stonegate Knight Kegang" || n === "石门魔物" || n === "Stonegate Monster") return t("monster.name");
     if (n === "木人" || n === "Wooden Dummy" || n === "Training Dummy") return t("arena.dummyName");
     if (n === "教练" || n === "Instructor" || /^教练/.test(n) || /^Instructor\b/.test(n)) return t("arena.instructor");
     if (n === "老兵" || n === "Veteran" || /^老兵/.test(n) || /^Veteran\b/.test(n)) return t("arena.veteran");
@@ -55,7 +61,7 @@
       var zh = I18n.literal("zh", "class." + cid);
       var en = I18n.literal("en", "class." + cid);
       var raw = D.CLASSES[cid].name;
-      if (n === zh || n === en || n === raw) return t("class." + cid);
+      if (n === zh || n === en || n === raw) return promotedNameOf(person) || t("class." + cid);
     }
     return n;
   }
@@ -63,11 +69,26 @@
     if (!it) return "";
     var id = typeof it === "string" ? it : it.id;
     if (id === "tonic") return t("item.tonic");
+    if (id === "promoBook") return t("item.promoBook");
+    if (id === "challengeWrit") return t("item.challengeWrit");
     return (typeof it === "object" && it.name) ? it.name : String(it);
   }
-  function wepLine(w) {
+  function usesText(w, cur) {
     if (!w) return "";
-    return t("wep.line", { mt: w.mt, hit: w.hit, wt: w.wt });
+    var max = w.maxUses != null ? w.maxUses : (w.id && D.weaponMaxUses ? D.weaponMaxUses(w.id) : 0);
+    if (!max) return "";
+    var left = typeof cur === "number" ? cur : (typeof w.uses === "number" ? w.uses : max);
+    return t("wep.uses", { cur: left, max: max });
+  }
+  function wepLine(w, cur) {
+    if (!w) return "";
+    var line = t("wep.line", { mt: w.mt, hit: w.hit, wt: w.wt });
+    var u = usesText(w, cur);
+    if (u) line += "　" + u;
+    if (typeof cur === "number" ? cur <= 0 : (typeof w.uses === "number" && w.uses <= 0)) {
+      line += "　" + t("wep.broken");
+    }
+    return line;
   }
   function setView(view) {
     activeUi = view || null;
@@ -240,14 +261,19 @@
     setView("faint");
   }
   function renderDungeonWin() {
-    var v = lastVictory || { goldGain: 0, drop: null };
+    var v = lastVictory || { goldGain: 0, drop: null, loot: {} };
+    var loot = v.loot || {};
     var dropLine = "";
-    if (v.drop && v.drop.weapon && v.drop.unit) {
-      dropLine =
+    function addLoot(drop, key) {
+      if (!drop || !drop.weapon) return;
+      dropLine +=
         "<p class='loot-note'>" +
-        t("dungeon.loot", { weapon: weaponName(v.drop.weapon), name: displayName(v.drop.unit) }) +
+        t(key, { weapon: weaponName(drop.weapon), name: drop.unit ? displayName(drop.unit) : "" }) +
         "</p>";
     }
+    addLoot(loot.copper || (!loot.silver && v.drop ? v.drop : null), "dungeon.lootCopper");
+    addLoot(loot.silver, "dungeon.lootSilver");
+    if (loot.tome) dropLine += "<p class='loot-note'>" + t("dungeon.lootTome") + "</p>";
     openModal(
       panel(
         t("dungeon.winTitle"),
@@ -414,10 +440,14 @@
     }
   }
 
-  function newUnit(name, classId) {
+  function newUnit(name, classId, id) {
     var cls = D.CLASSES[classId];
     var b = cls.bases;
+    var start = cls.startingWeapon;
+    var uses = {};
+    uses[start] = D.weaponMaxUses(start);
     return {
+      id: id || classId,
       name: name || cls.name,
       classId: classId,
       className: cls.name,
@@ -430,8 +460,10 @@
       spd: b.spd,
       luck: b.luck,
       def: b.def,
-      weaponId: cls.startingWeapon,
-      weapons: [cls.startingWeapon],
+      weaponId: start,
+      weapons: [start],
+      weaponUses: uses,
+      promoted: false,
       dungeonLockUntil: 0,
       dungeonFoughtUntil: 0,
       classBonusApplied: true
@@ -442,7 +474,8 @@
     var classId = raw && D.CLASSES[raw.classId] ? raw.classId : fallbackId;
     if (!classId || !D.CLASSES[classId]) return null;
     var cls = D.CLASSES[classId];
-    var u = newUnit(cls.name, classId);
+    var givenId = raw && raw.id ? String(raw.id).slice(0, 32) : "";
+    var u = newUnit(cls.name, classId, givenId || classId);
     if (!raw) return u;
     if (raw.name) u.name = String(raw.name).slice(0, 8);
     if (typeof raw.level === "number") u.level = C.clamp(Math.floor(raw.level), 1, D.LEVEL_CAP);
@@ -456,15 +489,44 @@
       if (!u.weapons.length) u.weapons = [cls.startingWeapon];
       if (u.weapons.indexOf(u.weaponId) === -1) u.weaponId = u.weapons[0];
     }
+    maybeSwapStartingIron(u);
+    u.weaponUses = normalizeWeaponUses(u, raw && raw.weaponUses);
     if (u.maxHp < 1) u.maxHp = cls.bases.hp;
     if (u.hp > u.maxHp) u.hp = u.maxHp;
     if (u.level >= D.LEVEL_CAP) u.exp = 0;
+    u.promoted = !!raw.promoted;
     if (typeof raw.dungeonLockUntil === "number") u.dungeonLockUntil = raw.dungeonLockUntil;
     if (typeof raw.dungeonFoughtUntil === "number") u.dungeonFoughtUntil = raw.dungeonFoughtUntil;
     u.classBonusApplied = !!raw.classBonusApplied;
     if (!u.classBonusApplied) applyClassBonusOnce(u);
     ensureLanceLoadout(u);
+    if (!u.weaponUses[u.weaponId] && u.weaponUses[u.weaponId] !== 0) {
+      u.weaponUses[u.weaponId] = D.weaponMaxUses(u.weaponId);
+    }
     return u;
+  }
+
+  function maybeSwapStartingIron(u) {
+    if (!u) return;
+    var iron = D.CLASS_START_IRON && D.CLASS_START_IRON[u.classId];
+    var wood = D.CLASSES[u.classId] && D.CLASSES[u.classId].startingWeapon;
+    if (!iron || !wood) return;
+    if (u.weapons.length === 1 && u.weapons[0] === iron) {
+      u.weapons = [wood];
+      u.weaponId = wood;
+    }
+  }
+
+  function normalizeWeaponUses(u, saved) {
+    var out = {};
+    var i, id, max;
+    for (i = 0; i < u.weapons.length; i++) {
+      id = u.weapons[i];
+      max = D.weaponMaxUses(id);
+      if (saved && typeof saved[id] === "number") out[id] = C.clamp(Math.floor(saved[id]), 0, max);
+      else out[id] = max;
+    }
+    return out;
   }
 
   function ensureLanceLoadout(u) {
@@ -474,14 +536,16 @@
     var start = D.CLASSES[u.classId].startingWeapon;
     if (u.weapons.indexOf(start) === -1) u.weapons.push(start);
     u.weaponId = start;
+    if (!u.weaponUses) u.weaponUses = {};
+    if (u.weaponUses[start] == null) u.weaponUses[start] = D.weaponMaxUses(start);
   }
 
   function emptyState() {
     return {
-      party: D.PARTY_ORDER.map(function (id) { return newUnit(D.CLASSES[id].name, id); }),
+      party: D.PARTY_ORDER.map(function (id) { return newUnit(D.CLASSES[id].name, id, id); }),
       activeId: D.PARTY_ORDER[0],
       gold: D.START_GOLD,
-      items: { tonic: 0 },
+      items: { tonic: 0, promoBook: 0, challengeWrit: 0 },
       day: 1,
       period: 0,
       quests: [],
@@ -497,46 +561,61 @@
       guildJoinedAt: 0,
       arenaSeasonStart: Date.now(),
       arenaBoard: generateArenaBoard(Date.now()),
-      arenaPrizeNote: null
+      arenaPrizeNote: null,
+      arenaFightsUsed: 0,
+      arenaFightResetAt: 0
     };
   }
 
   function migrateSave(data) {
     if (!data || typeof data !== "object") return null;
     try {
-      var have = {};
       var party = [];
-      var i, u, id;
+      var usedIds = {};
+      var haveClass = {};
+      var i, u, id, src;
       if (Array.isArray(data.party)) {
         for (i = 0; i < data.party.length; i++) {
-          u = unitFromSave(data.party[i], data.party[i] && data.party[i].classId);
-          if (u && !have[u.classId]) {
-            have[u.classId] = u;
-          }
+          src = data.party[i];
+          u = unitFromSave(src, src && src.classId);
+          if (!u) continue;
+          if (!u.id || usedIds[u.id]) u.id = allocUnitId(u.classId, usedIds);
+          usedIds[u.id] = true;
+          haveClass[u.classId] = true;
+          party.push(u);
         }
       }
       if (data.player && data.player.classId) {
         u = unitFromSave(data.player, data.player.classId);
-        if (u) have[u.classId] = u;
+        if (u && !haveClass[u.classId]) {
+          if (!u.id || usedIds[u.id]) u.id = allocUnitId(u.classId, usedIds);
+          usedIds[u.id] = true;
+          haveClass[u.classId] = true;
+          party.push(u);
+        }
       }
       for (i = 0; i < D.PARTY_ORDER.length; i++) {
         id = D.PARTY_ORDER[i];
-        party.push(have[id] || newUnit(D.CLASSES[id].name, id));
+        if (haveClass[id]) continue;
+        u = newUnit(D.CLASSES[id].name, id, allocUnitId(id, usedIds));
+        usedIds[u.id] = true;
+        haveClass[id] = true;
+        party.push(u);
       }
       if (!party.length) return null;
       for (i = 0; i < party.length; i++) ensureLanceLoadout(party[i]);
 
-      var tonic = 0;
-      if (data.items && typeof data.items.tonic === "number") tonic = data.items.tonic;
-      else if (data.player && data.player.items && typeof data.player.items.tonic === "number") {
-        tonic = data.player.items.tonic;
-      }
-      if (tonic < 0) tonic = 0;
+      var items = { tonic: 0, promoBook: 0, challengeWrit: 0 };
+      src = data.items || (data.player && data.player.items) || {};
+      ["tonic", "promoBook", "challengeWrit"].forEach(function (k) {
+        if (typeof src[k] === "number" && src[k] > 0) items[k] = Math.floor(src[k]);
+      });
 
-      var activeId = data.activeId;
-      if (!D.CLASSES[activeId]) {
-        activeId = data.player && D.CLASSES[data.player.classId] ? data.player.classId : party[0].classId;
+      var activeId = resolveActiveId(data.activeId, party);
+      if (!activeId && data.player && data.player.classId) {
+        activeId = resolveActiveId(data.player.classId, party);
       }
+      if (!activeId) activeId = party[0].id;
 
       var day = typeof data.day === "number" ? Math.max(1, Math.floor(data.day)) : 1;
       var period = typeof data.period === "number" ? C.clamp(Math.floor(data.period), 0, 2) : 0;
@@ -550,7 +629,7 @@
         party: party,
         activeId: activeId,
         gold: gold,
-        items: { tonic: tonic },
+        items: items,
         day: day,
         period: period,
         quests: Array.isArray(data.quests) ? data.quests : [],
@@ -566,12 +645,124 @@
         guildJoinedAt: typeof data.guildJoinedAt === "number" ? data.guildJoinedAt : 0,
         arenaSeasonStart: typeof data.arenaSeasonStart === "number" ? data.arenaSeasonStart : Date.now(),
         arenaBoard: boardHasGuilds(data.arenaBoard) ? data.arenaBoard : generateArenaBoard(data.arenaSeasonStart || Date.now()),
-        arenaPrizeNote: data.arenaPrizeNote || null
+        arenaPrizeNote: data.arenaPrizeNote || null,
+        arenaFightsUsed: typeof data.arenaFightsUsed === "number" ? Math.max(0, Math.floor(data.arenaFightsUsed)) : 0,
+        arenaFightResetAt: typeof data.arenaFightResetAt === "number" ? data.arenaFightResetAt : 0
       };
       return ret;
     } catch (e) {
       return null;
     }
+  }
+
+  function allocUnitId(classId, used) {
+    used = used || {};
+    if (!used[classId]) return classId;
+    var n = 2, id;
+    do {
+      id = classId + "-" + n;
+      n += 1;
+    } while (used[id]);
+    return id;
+  }
+
+  function resolveActiveId(activeId, party) {
+    var i;
+    if (!party || !party.length) return "";
+    if (activeId) {
+      for (i = 0; i < party.length; i++) if (party[i].id === activeId) return party[i].id;
+      for (i = 0; i < party.length; i++) if (party[i].classId === activeId) return party[i].id;
+    }
+    return party[0].id;
+  }
+
+  function effectiveLevel(u) {
+    var lv = u && u.level ? u.level : 1;
+    if (u && u.promoted) lv += 20;
+    return lv;
+  }
+
+  function partyGroups(list) {
+    var src = list || (state && state.party) || [];
+    var map = {};
+    var i, u, cid, groups = [], seen = {};
+    for (i = 0; i < src.length; i++) {
+      u = src[i];
+      cid = u.classId;
+      if (!map[cid]) map[cid] = [];
+      map[cid].push(u);
+    }
+    for (i = 0; i < D.PARTY_ORDER.length; i++) {
+      cid = D.PARTY_ORDER[i];
+      if (map[cid] && map[cid].length) {
+        groups.push({ classId: cid, units: map[cid] });
+        seen[cid] = true;
+      }
+    }
+    for (cid in map) {
+      if (Object.prototype.hasOwnProperty.call(map, cid) && !seen[cid]) {
+        groups.push({ classId: cid, units: map[cid] });
+      }
+    }
+    return groups;
+  }
+
+  function usesOf(u, weaponId) {
+    var id = weaponId || (u && u.weaponId);
+    if (!id) return 0;
+    var max = D.weaponMaxUses(id);
+    if (u && u.weaponUses && typeof u.weaponUses[id] === "number") {
+      return C.clamp(Math.floor(u.weaponUses[id]), 0, max || Math.floor(u.weaponUses[id]));
+    }
+    return max;
+  }
+
+  function setUses(u, weaponId, n) {
+    if (!u || !weaponId) return;
+    if (!u.weaponUses) u.weaponUses = {};
+    var max = D.weaponMaxUses(weaponId);
+    u.weaponUses[weaponId] = C.clamp(Math.floor(n), 0, max || Math.floor(n));
+  }
+
+  function grantWeapon(u, weaponId) {
+    if (!u || !D.WEAPONS[weaponId]) return false;
+    if (u.weapons.indexOf(weaponId) === -1) {
+      u.weapons.push(weaponId);
+      setUses(u, weaponId, D.weaponMaxUses(weaponId));
+    } else if (!u.weaponUses || u.weaponUses[weaponId] == null) {
+      setUses(u, weaponId, D.weaponMaxUses(weaponId));
+    }
+    return true;
+  }
+
+  function isWeaponBroken(u, weaponId) {
+    var id = weaponId || (u && u.weaponId);
+    if (!u || !id) return false;
+    return usesOf(u, id) <= 0;
+  }
+
+  function copyUnitWeapon(u, weaponId) {
+    var id = weaponId || (u && u.weaponId);
+    if (!id) return null;
+    return D.copyWeapon(id, usesOf(u, id));
+  }
+
+  function assertUsableWeapon(u) {
+    if (!u || !u.weaponId || !D.WEAPONS[u.weaponId]) {
+      toast(t("toast.noWep"));
+      return false;
+    }
+    if (isWeaponBroken(u)) {
+      toast(t("toast.brokenWep"));
+      return false;
+    }
+    return true;
+  }
+
+  function syncUsesFromFighter(person, fighter) {
+    if (!person || !fighter || !fighter.weapon || !fighter.weapon.id) return;
+    if (typeof fighter.weapon.uses !== "number") return;
+    setUses(person, fighter.weapon.id, fighter.weapon.uses);
   }
 
   function partyMaxOf(party) {
@@ -583,10 +774,16 @@
     var i, u;
     if (!state || !state.party || !state.party.length) return null;
     for (i = 0; i < state.party.length; i++) {
-      if (state.party[i].classId === state.activeId) return state.party[i];
+      if (state.party[i].id === state.activeId) return state.party[i];
+    }
+    for (i = 0; i < state.party.length; i++) {
+      if (state.party[i].classId === state.activeId) {
+        state.activeId = state.party[i].id;
+        return state.party[i];
+      }
     }
     u = state.party[0];
-    state.activeId = u.classId;
+    state.activeId = u.id;
     return u;
   }
   function partyMaxLevel() {
@@ -609,10 +806,10 @@
     return 1;
   }
   function unitDaily(u) {
-    return D.money(D.dailyIncome(u && u.level ? u.level : 1) * goldBonus());
+    return D.money(D.dailyIncome(effectiveLevel(u)) * goldBonus());
   }
   function unitTick(u) {
-    return D.tickIncome(u && u.level ? u.level : 1) * goldBonus();
+    return D.tickIncome(effectiveLevel(u)) * goldBonus();
   }
   function goldRate() {
     var n = 0, i;
@@ -627,7 +824,7 @@
     return D.money(n);
   }
   function paybackDays(level) {
-    if (level >= D.LEVEL_CAP) return 0;
+    if (level >= (D.EFFECTIVE_LEVEL_CAP || 40)) return 0;
     var gain = (D.dailyIncome(level + 1) - D.dailyIncome(level)) * goldBonus();
     if (gain <= 0) return 0;
     return D.money(trainFee(level) / gain);
@@ -671,11 +868,12 @@
       u.hp = u.maxHp;
     }
   }
-  function setActive(classId) {
-    var i;
+  function setActive(id) {
+    var i, u;
     for (i = 0; i < state.party.length; i++) {
-      if (state.party[i].classId === classId) {
-        state.activeId = classId;
+      u = state.party[i];
+      if (u.id === id || u.classId === id) {
+        state.activeId = u.id;
         renderHud();
         save();
         return;
@@ -1003,7 +1201,7 @@
       p.level += 1;
       var unit = { hp: p.maxHp, str: p.str, skill: p.skill, spd: p.spd, luck: p.luck, def: p.def };
       var r = C.applyLevelUp(unit, growths, roll);
-      r.unitId = p.classId;
+      r.unitId = p.id || p.classId;
       p.maxHp = r.after.hp;
       p.hp += r.hpGain;
       p.str = r.after.str;
@@ -1042,23 +1240,25 @@
     return [r];
   }
 
-  function canUseWeapon(weaponId) {
+  function canUseWeapon(weaponId, unit) {
     var w = D.WEAPONS[weaponId];
-    var cls = D.CLASSES[active().classId];
-    return w && w.type === cls.weaponType;
+    var who = unit || active();
+    var cls = who && D.CLASSES[who.classId];
+    return !!(w && cls && w.type === cls.weaponType);
   }
 
   function currentWeapon() {
-    return D.copyWeapon(active().weaponId);
+    var p = active();
+    return copyUnitWeapon(p, p.weaponId);
   }
 
   function fighterFrom(person) {
-    var w = person.weapon ? person.weapon : D.copyWeapon(person.weaponId);
+    var w = person.weapon ? person.weapon : copyUnitWeapon(person, person.weaponId);
     var bonuses = { hit: 0, avoid: 0 };
     return {
       name: person.name,
       classId: person.classId || "",
-      className: person.className || (person.classId ? D.CLASSES[person.classId].name : ""),
+      className: promotedNameOf(person) || person.className || (person.classId ? D.CLASSES[person.classId].name : ""),
       hp: person.hp,
       maxHp: person.maxHp,
       str: person.str,
@@ -1129,7 +1329,36 @@
       if (clearLockIfDue(state.party[i], now)) changed = true;
       if (clearFoughtIfDue(state.party[i], now)) changed = true;
     }
+    if (refreshArenaFights(now)) changed = true;
     return changed;
+  }
+
+  function refreshArenaFights(now) {
+    now = now || Date.now();
+    if (!state) return false;
+    if (typeof state.arenaFightResetAt === "number" && state.arenaFightResetAt > 0 && state.arenaFightResetAt <= now) {
+      state.arenaFightsUsed = 0;
+      state.arenaFightResetAt = 0;
+      return true;
+    }
+    return false;
+  }
+
+  function arenaFightsLeft() {
+    refreshArenaFights();
+    var used = (state && state.arenaFightsUsed) || 0;
+    return Math.max(0, (D.ARENA_FIGHTS_MAX || 5) - used);
+  }
+
+  function spendArenaFight() {
+    refreshArenaFights();
+    state.arenaFightsUsed = (state.arenaFightsUsed || 0) + 1;
+    if (!state.arenaFightResetAt) state.arenaFightResetAt = nextUnlockMs(Date.now());
+  }
+
+  function resetArenaFights() {
+    state.arenaFightsUsed = 0;
+    state.arenaFightResetAt = 0;
   }
 
   function isDungeonLocked(u, now) {
@@ -1176,11 +1405,14 @@
     return "";
   }
 
-  function unitById(classId) {
+  function unitById(id) {
     var i;
     if (!state) return null;
     for (i = 0; i < state.party.length; i++) {
-      if (state.party[i].classId === classId) return state.party[i];
+      if (state.party[i].id === id) return state.party[i];
+    }
+    for (i = 0; i < state.party.length; i++) {
+      if (state.party[i].classId === id) return state.party[i];
     }
     return null;
   }
@@ -1231,38 +1463,43 @@
     var rate = goldRate();
     var dayGold = goldPerDay();
     var incomeLine = t("hud.income", { rate: formatTick(rate) }) + "　" + t("hud.incomeDay", { day: formatGold(dayGold) });
-    var roster = state.party
-      .map(function (u) {
+    var roster = partyGroups(state.party).map(function (g) {
+      var cells = g.units.map(function (u) {
         var down = isDungeonLocked(u);
         var fought = !down && isDungeonFought(u);
         var tag = down ? t("hud.defeated") : fought ? t("hud.fought") : "";
         var tip = dungeonLimitLabel(u);
-        var mateHp = Math.round((u.hp / Math.max(1, u.maxHp)) * 100);
+        var hpLabel = tag ? tag : (u.hp + "/" + u.maxHp);
         return (
-          '<button type="button" class="hud-mate' +
-          (u.classId === p.classId ? " selected" : "") +
+          '<button type="button" class="hud-mug' +
+          (u.id === p.id ? " selected" : "") +
           (down || fought ? " locked" : "") +
           '" data-act="select-unit" data-id="' +
-          u.classId +
+          esc(u.id) +
           '" title="' +
           esc(displayName(u)) +
+          "　" + esc(classNameOf(u)) +
+          "　Lv." + u.level +
+          "　" + u.hp + "/" + u.maxHp +
           (tip ? "　" + tip : "") +
           '">' +
           mugTag(u, false, "mug") +
-          '<span class="hud-mate-info"><span class="nm">' +
-          esc(classNameOf(u)) +
-          '</span><span class="lv">Lv.' +
-          u.level +
-          "　" + u.hp + "/" + u.maxHp +
-          "</span>" +
-          '<span class="hud-bar hp' + (mateHp <= 30 ? " warn" : "") + '">' +
-          hpTrack(u.hp, u.maxHp) +
-          "</span>" +
-          (tag ? '<span class="lock-tag">' + tag + "</span>" : "") +
+          '<span class="lv">Lv.' + u.level + (u.promoted ? "★" : "") + "</span>" +
+          '<span class="hp' + (tag ? " lock" : "") + '">' +
+          esc(hpLabel) +
           "</span></button>"
         );
-      })
-      .join("");
+      }).join("");
+      return (
+        '<div class="hud-party-group"><div class="hud-party-head"><span>' +
+        esc(t("class." + g.classId)) +
+        '</span><span class="cnt">×' +
+        g.units.length +
+        '</span></div><div class="hud-mug-grid">' +
+        cells +
+        "</div></div>"
+      );
+    }).join("");
     $("#hud").innerHTML =
       '<div class="hud-unit">' +
       mugTag(p, false) +
@@ -1495,15 +1732,24 @@
     return list[(roll || rng()).int(0, list.length - 1)];
   }
 
-  function makeBossFighter(hp, weaponId) {
-    var b = D.DUNGEON_BOSS;
+  function dungeonWaveData(waveIndex) {
+    var waves = D.DUNGEON_WAVES || [D.DUNGEON_BOSS];
+    return waves[waveIndex] || waves[0];
+  }
+
+  function makeMonster(waveIndex, hp, weaponId) {
+    var b = dungeonWaveData(waveIndex);
     var wId = weaponId;
-    if (!wId && dungeonRun && dungeonRun.boss && dungeonRun.boss.weapon && dungeonRun.boss.weapon.id) {
+    if (!wId && dungeonRun && dungeonRun.boss && dungeonRun.boss.weapon && dungeonRun.boss.weapon.id &&
+        (dungeonRun.wave == null || dungeonRun.wave === waveIndex)) {
       wId = dungeonRun.boss.weapon.id;
     }
-    if (!wId) wId = b.weaponId;
+    if (!wId) {
+      if (b.weaponPool === "iron") wId = randomIronWeaponId();
+      else wId = b.weaponId;
+    }
     return {
-      name: b.name,
+      name: "石门魔物",
       classId: b.classId,
       className: b.className,
       level: b.level,
@@ -1518,36 +1764,58 @@
     };
   }
 
-  function openDungeonDeploy() {
-    refreshLocks();
-    var rows = state.party.map(function (u) {
-      var limit = dungeonLimitLabel(u);
-      var disabled = !canDungeonFight(u);
+  function makeBossFighter(hp, weaponId) {
+    return makeMonster(dungeonRun && dungeonRun.wave != null ? dungeonRun.wave : 0, hp, weaponId);
+  }
+
+  function deployRowHtml(u) {
+    var limit = dungeonLimitLabel(u);
+    var disabled = !canDungeonFight(u);
+    var broken = isWeaponBroken(u);
+    return (
+      '<label class="deploy-row' +
+      (disabled || broken ? " is-locked" : "") +
+      '"><input type="checkbox" data-deploy="' +
+      esc(u.id) +
+      '" ' +
+      (disabled || broken ? "disabled" : "checked") +
+      " />" +
+      mugTag(u, false, "mug") +
+      '<div class="info"><h4>' +
+      esc(displayName(u)) +
+      "　Lv." +
+      u.level +
+      (u.promoted ? "★" : "") +
+      "</h4><p>HP " +
+      u.hp +
+      "/" +
+      u.maxHp +
+      "　" +
+      esc(u.weaponId ? weaponName(u.weaponId) : "") +
+      (u.weaponId ? " " + usesText({ id: u.weaponId, uses: usesOf(u, u.weaponId), maxUses: D.weaponMaxUses(u.weaponId) }) : "") +
+      (broken ? "　" + t("wep.broken") : "") +
+      (limit ? "　" + limit : "") +
+      "</p></div></label>"
+    );
+  }
+
+  function groupedPickerHtml(list, rowFn) {
+    return partyGroups(list).map(function (g) {
       return (
-        '<label class="deploy-row' +
-        (disabled ? " is-locked" : "") +
-        '"><input type="checkbox" data-deploy="' +
-        u.classId +
-        '" ' +
-        (disabled ? "disabled" : "checked") +
-        " />" +
-        mugTag(u, false, "mug") +
-        '<div class="info"><h4>' +
-        esc(displayName(u)) +
-        "　" +
-        esc(classNameOf(u)) +
-        "　Lv." +
-        u.level +
-        "</h4><p>HP " +
-        u.hp +
-        "/" +
-        u.maxHp +
-        "　" +
-        esc(u.weaponId ? weaponName(u.weaponId) : "") +
-        (limit ? "　" + limit : "") +
-        "</p></div></label>"
+        '<div class="deploy-group"><div class="deploy-group-head"><span>' +
+        esc(t("class." + g.classId)) +
+        "</span><span>×" +
+        g.units.length +
+        '</span></div><div class="deploy-grid">' +
+        g.units.map(rowFn).join("") +
+        "</div></div>"
       );
     }).join("");
+  }
+
+  function openDungeonDeploy() {
+    refreshLocks();
+    var rows = groupedPickerHtml(state.party, deployRowHtml);
     var body =
       "<p>" + t("dungeon.lead") + "</p>" +
       "<p class='muted'>" + t("dungeon.note") + "</p>" +
@@ -1569,7 +1837,7 @@
       el = boxes[i];
       if (!el.checked || el.disabled) continue;
       u = unitById(el.getAttribute("data-deploy"));
-      if (u && !isDungeonLocked(u) && u.hp > 0) ids.push(u.classId);
+      if (u && !isDungeonLocked(u) && u.hp > 0 && !isWeaponBroken(u)) ids.push(u.id);
     }
     return ids;
   }
@@ -1582,7 +1850,9 @@
     dungeonRun = {
       ids: ids.slice(),
       living: ids.slice(),
-      boss: makeBossFighter(null, randomIronWeaponId()),
+      wave: 0,
+      boss: makeMonster(0, null, randomIronWeaponId()),
+      loot: {},
       lastAtk: null,
       phase: "player"
     };
@@ -1602,44 +1872,54 @@
   function renderDungeonRoom() {
     if (!dungeonRun) return;
     var living = dungeonLivingUnits();
-    dungeonRun.living = living.map(function (u) { return u.classId; });
+    dungeonRun.living = living.map(function (u) { return u.id; });
     if (dungeonRun.boss.hp <= 0) {
-      finishDungeonWin();
-      return;
+      if ((dungeonRun.wave || 0) < 1) {
+        advanceDungeonWave();
+        living = dungeonLivingUnits();
+        dungeonRun.living = living.map(function (u) { return u.id; });
+      } else {
+        finishDungeonWin();
+        return;
+      }
     }
     if (!living.length) {
       finishDungeonWipe();
       return;
     }
     var b = dungeonRun.boss;
-    var ready = living.filter(function (u) { return canDungeonFight(u); });
-    var rows = living.map(function (u) {
-      var can = canDungeonFight(u);
+    var wave = dungeonRun.wave || 0;
+    var ready = living.filter(function (u) { return canDungeonFight(u) && !isWeaponBroken(u); });
+    var rows = groupedPickerHtml(living, function (u) {
+      var can = canDungeonFight(u) && !isWeaponBroken(u);
+      var broken = isWeaponBroken(u);
       return (
-        '<div class="list-item"><div class="info">' +
+        '<div class="deploy-row' + (can ? "" : " is-locked") + '">' +
         mugTag(u, false, "mug") +
-        "<h4>" +
+        '<div class="info"><h4>' +
         esc(displayName(u)) +
-        "　" +
-        esc(classNameOf(u)) +
+        "　Lv." +
+        u.level +
         "</h4><p>HP " +
         u.hp +
         "/" +
         u.maxHp +
         "　" +
         esc(weaponName(u.weaponId)) +
-        (can ? "" : "　" + t("dungeon.foughtToday")) +
+        " " +
+        usesText({ id: u.weaponId, uses: usesOf(u, u.weaponId), maxUses: D.weaponMaxUses(u.weaponId) }) +
+        (can ? "" : broken ? "　" + t("wep.broken") : "　" + t("dungeon.foughtToday")) +
         "</p></div>" +
         (can
           ? '<button type="button" class="btn" data-act="dungeon-atk" data-id="' +
-            u.classId +
+            esc(u.id) +
             '">' + t("dungeon.attack") + '</button>'
           : "") +
         "</div>"
       );
-    }).join("");
+    });
     var body =
-      "<p>" + t("dungeon.roomLead") + "</p>" +
+      "<p>" + t(wave >= 1 ? "dungeon.roomLead2" : "dungeon.roomLead1") + "</p>" +
       (ready.length ? "" : "<p class='muted'>" + t("dungeon.allFought") + "</p>") +
       '<div class="boss-card">' +
       mugTag(b, true, "mug") +
@@ -1648,7 +1928,7 @@
       "　" +
       esc(classNameOf(b)) +
       "　Lv." +
-      (b.level || D.DUNGEON_BOSS.level) +
+      (b.level || dungeonWaveData(wave).level) +
       "</h4><div class='hud-bar hp'><span>HP</span>" +
       hpTrack(b.hp, b.maxHp) +
       "<span>" +
@@ -1667,18 +1947,19 @@
     setView("dungeon-room");
   }
 
-  function beginDungeonAttack(classId) {
-    var u = unitById(classId);
+  function beginDungeonAttack(id) {
+    var u = unitById(id);
     if (!dungeonRun || !u || !canDungeonFight(u)) return;
-    setActive(classId);
-    dungeonRun.lastAtk = classId;
+    if (!assertUsableWeapon(u)) return;
+    setActive(u.id);
+    dungeonRun.lastAtk = u.id;
     dungeonRun.phase = "player";
     closeModal();
     showForecast({
       kind: "dungeon",
       atk: fighterFrom(u),
       def: makeBossFighter(dungeonRun.boss.hp),
-      unitId: classId,
+      unitId: u.id,
       playerIsA: true
     });
   }
@@ -1694,14 +1975,14 @@
       living.sort(function (a, b) { return a.hp - b.hp; });
       target = living[0];
     }
-    setActive(target.classId);
+    setActive(target.id);
     dungeonRun.phase = "boss";
     closeModal();
     showForecast({
       kind: "dungeon",
       atk: makeBossFighter(dungeonRun.boss.hp),
       def: fighterFrom(target),
-      unitId: target.classId,
+      unitId: target.id,
       playerIsA: false,
       noCancel: true
     });
@@ -1718,12 +1999,13 @@
       boss.hp = Math.max(0, result.aHp);
       unit.hp = Math.max(0, result.bHp);
     }
+    syncUsesFromFighter(unit, ctx.playerIsA ? ctx.atk : ctx.def);
     if (ctx.playerIsA) markDungeonFought(unit);
     var unitDead = unit.hp <= 0;
     if (unitDead) {
       lockUnit(unit);
       if (dungeonRun.living) {
-        dungeonRun.living = dungeonRun.living.filter(function (id) { return id !== unit.classId; });
+        dungeonRun.living = dungeonRun.living.filter(function (id) { return id !== unit.id; });
       }
     }
     return { unitDead: unitDead, bossDead: boss.hp <= 0, unit: unit, boss: boss };
@@ -1736,7 +2018,11 @@
     var note;
     var title;
     var next;
-    if (info.bossDead) {
+    if (info.bossDead && (dungeonRun.wave || 0) < 1) {
+      title = t("dungeon.waveClear");
+      note = t("dungeon.waveClearNote");
+      next = "dungeon-next-wave";
+    } else if (info.bossDead) {
       title = t("dungeon.roundWin");
       note = t("dungeon.roundWinNote");
       next = "dungeon-win";
@@ -1795,21 +2081,53 @@
     }
     target = usable[0] || living[0] || (ids[0] ? unitById(ids[0]) : state.party[0]);
     if (!target) return { weapon: w, unit: null };
-    if (target.weapons.indexOf(pick) === -1) target.weapons.push(pick);
+    grantWeapon(target, pick);
+    w = D.copyWeapon(pick, usesOf(target, pick));
     return { weapon: w, unit: target };
   }
 
-  function finishDungeonWin(forcedCopper) {
-    var ids, drop;
-    ids = dungeonRun ? dungeonRun.ids : state.party.map(function (p) { return p.classId; });
-    drop = grantCopperReward(ids, forcedCopper || state._forceCopper || null);
-    state._forceCopper = null;
+  function grantSilverReward(ids, forcedId) {
+    var pool = D.SILVER_REWARDS || ["silver-sword", "silver-lance", "silver-axe", "silver-bow"];
+    return grantCopperReward(ids, forcedId && D.WEAPONS[forcedId] ? forcedId : pool[rng().int(0, pool.length - 1)]);
+  }
+
+  function advanceDungeonWave() {
+    if (!dungeonRun) return;
+    if (!dungeonRun.loot) dungeonRun.loot = {};
+    if (!dungeonRun.loot.copper) {
+      dungeonRun.loot.copper = grantCopperReward(dungeonRun.ids, state._forceCopper || null);
+      state._forceCopper = null;
+      if (dungeonRun.loot.copper && dungeonRun.loot.copper.weapon && dungeonRun.loot.copper.unit) {
+        toast(t("dungeon.lootCopper", {
+          weapon: weaponName(dungeonRun.loot.copper.weapon),
+          name: displayName(dungeonRun.loot.copper.unit)
+        }));
+      }
+    }
+    dungeonRun.wave = 1;
+    dungeonRun.boss = makeMonster(1);
+    dungeonRun.phase = "player";
+  }
+
+  function finishDungeonWin(forcedSilver) {
+    var ids = dungeonRun ? dungeonRun.ids : state.party.map(function (p) { return p.id; });
+    var loot = (dungeonRun && dungeonRun.loot) ? dungeonRun.loot : {};
+    if (!loot.silver) {
+      loot.silver = grantSilverReward(ids, forcedSilver || state._forceSilver || null);
+      state._forceSilver = null;
+      if (state._forceTome === true || (state._forceTome !== false && rng().int(0, 99) < 50)) {
+        if (!state.items) state.items = {};
+        state.items.promoBook = (state.items.promoBook || 0) + 1;
+        loot.tome = true;
+      }
+      state._forceTome = null;
+    }
     pendingLevelUps = [];
     dungeonRun = null;
     closeBattle();
     renderHud();
     save();
-    lastVictory = { goldGain: 0, drop: drop };
+    lastVictory = { goldGain: 0, loot: loot, drop: loot.silver || loot.copper || null };
     renderDungeonWin();
   }
 
@@ -2037,9 +2355,57 @@
   }
 
   function openShop() {
+    var p = active();
+    var irons = D.SHOP_WEAPONS || D.IRON_WEAPONS;
+    var rows = irons.map(function (id) {
+      var w = D.WEAPONS[id];
+      if (!w) return "";
+      var owned = p.weapons.indexOf(id) !== -1;
+      var usable = canUseWeapon(id, p);
+      var poor = state.gold < w.cost;
+      var disabled = owned || !usable || poor;
+      var why = owned ? t("shop.owned") : (!usable ? t("shop.cantUse") : (poor ? t("goldShort") : ""));
+      return (
+        '<div class="list-item shop-item"><div class="info"><h4>' +
+        weaponName(w) +
+        "</h4><p>" +
+        wepLine(w, D.weaponMaxUses(id)) +
+        (why ? "　" + why : "") +
+        '</p></div><span class="price">' +
+        w.cost +
+        '</span>' +
+        (disabled
+          ? ""
+          : '<button type="button" class="btn" data-act="buy-weapon" data-id="' +
+            id +
+            '">' + t("ui.ok") + "</button>") +
+        "</div>"
+      );
+    }).join("");
+    var writ = D.ITEMS.challengeWrit;
+    var writPoor = state.gold < writ.cost;
+    var writRow =
+      '<div class="list-item shop-item"><div class="info"><h4>' +
+      itemName("challengeWrit") +
+      "</h4><p>" +
+      t("shop.writLead") +
+      (writPoor ? "　" + t("goldShort") : "") +
+      '</p></div><span class="price">' +
+      writ.cost +
+      "</span>" +
+      (writPoor
+        ? ""
+        : '<button type="button" class="btn" data-act="buy-item" data-id="challengeWrit">' +
+          t("ui.ok") +
+          "</button>") +
+      "</div>";
     var body =
       "<p class='lead'>" + t("shop.lead") + "</p>" +
-      '<div class="empty-shelf">' + t("shop.empty") + "</div>" +
+      "<p>" + esc(displayName(p)) + "　" + classNameOf(p) + "</p>" +
+      '<div class="shop-list">' +
+      rows +
+      writRow +
+      "</div>" +
       actions({ leave: t("ui.leave") });
     openModal(panel(t("shop.title"), body));
     setView("shop");
@@ -2112,22 +2478,87 @@
   }
 
   function openBank() {
-    var rate = goldRate();
-    var dayGold = goldPerDay();
+    var cost = D.REPAIR_COST || 5;
+    var groups = partyGroups(state.party).map(function (g) {
+      var blocks = g.units.map(function (u) {
+        var rows = u.weapons.map(function (id) {
+          if (!D.WEAPONS[id]) return "";
+          var max = D.weaponMaxUses(id);
+          var left = usesOf(u, id);
+          var full = left >= max;
+          var poor = state.gold < cost;
+          var w = D.copyWeapon(id, left);
+          return (
+            '<div class="list-item"><div class="info"><h4>' +
+            weaponName(id) +
+            (u.weaponId === id ? t("ui.equipped") : "") +
+            "</h4><p>" +
+            wepLine(w, left) +
+            (full ? "　" + t("smithy.full") : "") +
+            '</p></div>' +
+            (full || poor
+              ? ""
+              : '<button type="button" class="btn" data-act="repair" data-unit="' +
+                esc(u.id) +
+                '" data-id="' +
+                id +
+                '">' +
+                t("smithy.repair") +
+                "</button>") +
+            "</div>"
+          );
+        }).join("");
+        return (
+          '<div class="repair-group"><div class="repair-group-head">' +
+          esc(displayName(u)) +
+          "　" +
+          esc(classNameOf(u)) +
+          "　Lv." +
+          u.level +
+          "</div>" +
+          rows +
+          "</div>"
+        );
+      }).join("");
+      return blocks;
+    }).join("");
     var body =
-      "<p class='lead'>" + t("bank.lead") + "</p>" +
-      "<p>" + t("bank.gold", { gold: formatGold(state.gold) }) + "</p>" +
-      "<p>" + t("bank.income", { rate: formatTick(rate), day: formatGold(dayGold) }) + "</p>" +
+      "<p class='lead'>" + t("smithy.lead") + "</p>" +
+      "<p>" + t("smithy.gold", { gold: formatGold(state.gold) }) + "</p>" +
+      "<p class='muted'>" + t("smithy.repairCost", { cost: cost }) + "</p>" +
+      '<div class="repair-list">' +
+      (groups || "<p class='muted'>" + t("smithy.none") + "</p>") +
+      "</div>" +
       actions({ leave: t("ui.leave") });
-    openModal(panel(t("bank.title"), body, "narrow"));
+    openModal(panel(t("smithy.title"), body, "wide"));
     setView("bank");
+  }
+
+  function repairWeapon(unitId, weaponId) {
+    var u = unitById(unitId);
+    var cost = D.REPAIR_COST || 5;
+    var max, left;
+    if (!u || !weaponId || u.weapons.indexOf(weaponId) === -1) return;
+    max = D.weaponMaxUses(weaponId);
+    left = usesOf(u, weaponId);
+    if (left >= max) return;
+    if (state.gold < cost) {
+      toast(t("smithy.poor"));
+      return;
+    }
+    addGold(-cost);
+    setUses(u, weaponId, max);
+    toast(t("smithy.repaired", { name: displayName(u), weapon: weaponName(weaponId) }));
+    renderHud();
+    save();
+    openBank();
   }
 
   function openTraining() {
     var p = active();
     var cls = D.CLASSES[p.classId];
     var atCap = p.level >= D.LEVEL_CAP;
-    var cost = trainFee(p.level);
+    var cost = trainFee(effectiveLevel(p));
     var poor = !atCap && state.gold < cost;
     var rows = STAT_KEYS.map(function (k) {
       var val = k === "hp" ? p.maxHp : p[k];
@@ -2147,7 +2578,7 @@
     var costLine = atCap
       ? "<p>" + t("train.atCap", { cap: D.LEVEL_CAP }) + "</p>"
       : "<p>" + t("train.nextCostBonus", { lv: p.level, cost: formatGold(cost) }) + "</p>" +
-        "<p>" + t("train.payback", { days: formatGold(paybackDays(p.level)) }) + "</p>" +
+        "<p>" + t("train.payback", { days: formatGold(paybackDays(effectiveLevel(p))) }) + "</p>" +
         "<p class='muted'>" + t("train.goldBonus") + "</p>";
     var body =
       "<p class='lead'>" + t("train.lead") + "</p>" +
@@ -2265,44 +2696,60 @@
           t("guild.points", { points: currentGuildPoints() })
         : "　" + t("arena.needGuild")) +
       "</p>" +
+      "<p>" + t("arena.fights", { left: arenaFightsLeft(), max: D.ARENA_FIGHTS_MAX || 5 }) + "</p>" +
       "<p class='muted'>" + t("arena.noteFull") + "</p>" +
       rankTableHtml() +
-      actions({ "arena-fight": t("arena.fightNow"), leave: t("ui.leave") });
+      actions({
+        "arena-fight": { label: t("arena.fightNow"), disabled: arenaFightsLeft() <= 0 || isWeaponBroken(p) },
+        leave: t("ui.leave")
+      });
     openModal(panel(t("arena.title"), body, "wide"));
     setView("arena");
   }
 
   function openBag() {
     var p = active();
-    var tonic = state.items.tonic || 0;
+    var tonic = (state.items && state.items.tonic) || 0;
+    var tomes = (state.items && state.items.promoBook) || 0;
+    var writs = (state.items && state.items.challengeWrit) || 0;
     var wpn = p.weapons
       .map(function (id) {
-        var w = D.WEAPONS[id];
+        var w = D.copyWeapon(id, usesOf(p, id));
         if (!w) return "";
         var eq = p.weaponId === id;
+        var left = usesOf(p, id);
         return (
           '<div class="list-item"><div class="info"><h4>' +
           weaponName(w) +
           (eq ? t("ui.equipped") : "") +
+          (left <= 0 ? "　" + t("wep.broken") : "") +
           "</h4><p>" +
-          wepLine(w) +
+          wepLine(w, left) +
           "</p></div>" +
-          (eq || !canUseWeapon(id)
+          (eq || !canUseWeapon(id, p)
             ? ""
             : '<button type="button" class="btn" data-act="equip" data-id="' + id + '">' + t("ui.equip") + "</button>") +
           "</div>"
         );
       })
       .join("");
+    var promoDisabled = tomes <= 0 || p.promoted || p.level < 10;
     var body =
       "<p>" +
       t("bag.weaponsOf", { name: displayName(p), count: tonic }) +
       t("bag.shared") +
       "</p>" +
+      "<h3 style='font-size:1em;letter-spacing:.12em;margin:.8em 0 .3em'>" + t("bag.itemsHeading") + "</h3>" +
       '<div class="actions" style="margin-top:.4em">' +
       '<button type="button" class="btn" data-act="use-item" data-id="tonic"' +
       (tonic <= 0 || p.hp >= p.maxHp ? " disabled" : "") +
-      ">" + t("bag.useTonic") + "</button>" +
+      ">" + t("bag.useTonic") + " ×" + tonic + "</button>" +
+      '<button type="button" class="btn" data-act="use-item" data-id="promoBook"' +
+      (promoDisabled ? " disabled" : "") +
+      ">" + t("bag.usePromo") + " ×" + tomes + "</button>" +
+      '<button type="button" class="btn" data-act="use-item" data-id="challengeWrit"' +
+      (writs <= 0 ? " disabled" : "") +
+      ">" + t("bag.useWrit") + " ×" + writs + "</button>" +
       "</div>" +
       "<h3 style='font-size:1em;letter-spacing:.12em;margin:.8em 0 .3em'>" + t("bag.weaponsHeading") + "</h3>" +
       '<div class="list">' +
@@ -2353,6 +2800,7 @@
       "<span class='k'>" + t("stats.weapon") + "</span><span>" +
       weaponName(w) +
       t("wep.paren", { mt: w.mt, hit: w.hit, wt: w.wt }) +
+      (w && usesText(w) ? "　" + usesText(w) : "") +
       "</span>" +
       "<span class='k'>" + t("stats.atk") + "</span><span>" +
       snap.atk +
@@ -2469,6 +2917,17 @@
       toast(t("goldShort"));
       return;
     }
+    if (ctx.kind === "arena" || ctx.kind === "guild" || (ctx.kind === "dungeon" && ctx.playerIsA)) {
+      if (!assertUsableWeapon(p)) return;
+    }
+    if (ctx.kind === "arena") {
+      if (arenaFightsLeft() <= 0) {
+        toast(t("arena.noFights"));
+        openArena();
+        return;
+      }
+      spendArenaFight();
+    }
     if (ctx.fee) addGold(-ctx.fee);
     ctx.preHp = p.hp;
     ctx.preMax = p.maxHp;
@@ -2573,6 +3032,7 @@
       id +
       '">' +
       esc(weaponName(unit.weapon || unit.weaponId)) +
+      (unit.weapon && usesText(unit.weapon) ? " " + usesText(unit.weapon) : "") +
       "</span></div>"
     );
   }
@@ -2818,8 +3278,8 @@
       defEl.classList.remove("hurt", "dodge");
       void defEl.offsetWidth;
       playHitFx(atkId, defId, kind, ev);
-      if (ev.result === "miss") {
-        showPop(defId, t("battle.miss"), "miss");
+      if (ev.result === "miss" || ev.result === "broke") {
+        showPop(defId, ev.result === "broke" ? t("battle.broke") : t("battle.miss"), "miss");
         defEl.classList.add("dodge");
       } else {
         showPop(defId, String(ev.damage), "hit");
@@ -2953,6 +3413,7 @@
     }
     var p = active();
     p.hp = result.aHp;
+    syncUsesFromFighter(p, ctx.atk);
     var win = result.winner === "a";
     var lost = result.aHp <= 0;
     var expGain = 0;
@@ -3156,6 +3617,7 @@
         toast(t("toast.cantStand") || t("arena.noHp", { name: displayName(p) }));
         return;
       }
+      if (!assertUsableWeapon(p)) return;
       closeModal();
       showForecast({
         kind: "guild",
@@ -3202,7 +3664,7 @@
         toast(t("train.capToast"));
         return;
       }
-      var fee = trainFee(p.level);
+      var fee = trainFee(effectiveLevel(p));
       if (state.gold < fee) {
         toast(t("train.poorToast"));
         return;
@@ -3228,6 +3690,11 @@
           toast(t("arena.noHp", { name: displayName(p) }));
           return;
         }
+        if (arenaFightsLeft() <= 0) {
+          toast(t("arena.noFights"));
+          return;
+        }
+        if (!assertUsableWeapon(p)) return;
         var foe = makeArenaFoe();
         closeModal();
         pendingBattle = {
@@ -3286,6 +3753,17 @@
       beginDungeonBossTurn();
       return;
     }
+    if (act === "dungeon-next-wave") {
+      closeBattle();
+      pendingBattle = null;
+      advanceDungeonWave();
+      renderDungeonRoom();
+      return;
+    }
+    if (act === "repair") {
+      repairWeapon(btn ? btn.getAttribute("data-unit") : null, id);
+      return;
+    }
     if (act === "dungeon-win") {
       closeBattle();
       pendingBattle = null;
@@ -3329,7 +3807,7 @@
       return;
     }
     addGold(-w.cost);
-    p.weapons.push(id);
+    grantWeapon(p, id);
     p.weaponId = id;
     save();
     renderHud();
@@ -3337,10 +3815,67 @@
     openShop();
   }
 
+  function promoteUnit(u) {
+    var promo = u && D.PROMOTIONS[u.classId];
+    var k, i;
+    if (!promo || u.promoted || u.level < 10) return false;
+    for (i = 0; i < STAT_KEYS.length; i++) {
+      k = STAT_KEYS[i];
+      if (!promo[k]) continue;
+      if (k === "hp") {
+        u.maxHp += promo[k];
+        u.hp += promo[k];
+      } else {
+        u[k] += promo[k];
+      }
+    }
+    u.promoted = true;
+    u.level = 1;
+    u.exp = 0;
+    return true;
+  }
+
   function useItem(id, silent) {
     var p = active();
     var it = D.ITEMS[id];
-    if (!it || id !== "tonic" || !state.items.tonic) return;
+    if (!it || !state.items) return;
+    if (id === "challengeWrit") {
+      if (!(state.items.challengeWrit > 0)) return;
+      refreshArenaFights();
+      if (arenaFightsLeft() >= (D.ARENA_FIGHTS_MAX || 5)) {
+        if (!silent) toast(t("bag.writFull"));
+        return;
+      }
+      state.items.challengeWrit -= 1;
+      resetArenaFights();
+      if (!silent) toast(t("bag.writUsed"));
+      save();
+      renderHud();
+      if (!silent && $("#modal") && $("#modal").dataset.view === "bag") openBag();
+      return;
+    }
+    if (id === "promoBook") {
+      if (!(state.items.promoBook > 0)) {
+        if (!silent) toast(t("bag.noTome"));
+        return;
+      }
+      if (p.promoted) {
+        if (!silent) toast(t("bag.promoAlready"));
+        return;
+      }
+      if (p.level < 10) {
+        if (!silent) toast(t("bag.promoNeedLv"));
+        return;
+      }
+      if (!promoteUnit(p)) return;
+      state.items.promoBook -= 1;
+      if (!silent) toast(t("bag.promoOk", { name: displayName(p), class: classNameOf(p) }));
+      save();
+      renderHud();
+      if (!silent && $("#modal") && $("#modal").dataset.view === "bag") openBag();
+      return;
+    }
+    if (id !== "tonic" || !state.items.tonic) return;
     if (p.hp >= p.maxHp) {
       if (!silent) toast(t("toast.hpFull"));
       return;
@@ -3494,13 +4029,17 @@
           : null,
         party: state.party.map(function (u) {
           return {
+            id: u.id,
             name: u.name,
             classId: u.classId,
-            className: u.className,
+            className: classNameOf(u),
+            promoted: !!u.promoted,
             level: u.level,
+            effectiveLevel: effectiveLevel(u),
             hp: u.hp,
             maxHp: u.maxHp,
             weapon: u.weaponId,
+            uses: usesOf(u, u.weaponId),
             dungeonLockUntil: u.dungeonLockUntil || 0,
             lockLabel: lockoutLabel(u)
           };
@@ -3543,9 +4082,9 @@
       openDungeonDeploy();
     },
     startDungeon: function (ids) {
-      if (!ids) ids = state.party.map(function (u) { return u.classId; });
+      if (!ids) ids = state.party.map(function (u) { return u.id; });
       startDungeonRun(ids);
-      return dungeonRun && { living: dungeonRun.living.slice(), bossHp: dungeonRun.boss.hp };
+      return dungeonRun && { living: dungeonRun.living.slice(), bossHp: dungeonRun.boss.hp, wave: dungeonRun.wave };
     },
     lockoutUnit: function (classId, atMs) {
       var u = unitById(classId);
@@ -3571,7 +4110,7 @@
       return { classId: classId, hp: u.hp, maxHp: u.maxHp };
     },
     grantCopper: function (id, classIds) {
-      var ids = classIds || state.party.map(function (u) { return u.classId; });
+      var ids = classIds || state.party.map(function (u) { return u.id; });
       var drop = grantCopperReward(ids, id);
       save();
       return drop && drop.weapon ? { weapon: weaponName(drop.weapon), unit: drop.unit && displayName(drop.unit) } : null;
@@ -3579,19 +4118,28 @@
     previewVictory: function (weaponId) {
       if (!dungeonRun) {
         dungeonRun = {
-          ids: state.party.map(function (u) { return u.classId; }),
-          living: state.party.map(function (u) { return u.classId; }),
-          boss: makeBossFighter(0),
+          ids: state.party.map(function (u) { return u.id; }),
+          living: state.party.map(function (u) { return u.id; }),
+          wave: 1,
+          loot: {},
+          boss: makeMonster(1, 0),
           lastAtk: state.activeId,
           phase: "player"
         };
         dungeonRun.boss.hp = 0;
       }
-      finishDungeonWin(weaponId || "copper-axe");
+      dungeonRun.wave = 1;
+      if (weaponId && String(weaponId).indexOf("copper") === 0) {
+        if (!dungeonRun.loot) dungeonRun.loot = {};
+        dungeonRun.loot.copper = grantCopperReward(dungeonRun.ids, weaponId);
+        finishDungeonWin("silver-axe");
+      } else {
+        finishDungeonWin(weaponId || "silver-axe");
+      }
     },
     previewCrit: function () {
       var atk = fighterFrom(active());
-      var def = makeBossFighter(100);
+      var def = makeBossFighter(80);
       pendingBattle = {
         kind: "arena",
         title: t("crit.splash"),

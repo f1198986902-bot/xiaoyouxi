@@ -541,5 +541,68 @@ test("交锋结算同样套用三角修正", function () {
   assert.strictEqual(r.log[1].damage, 10);
 });
 
+test("无 uses 字段的武器不消耗耐久，默认仍只打 1 回合", function () {
+  var a = {
+    name: "甲",
+    hp: 20,
+    maxHp: 20,
+    str: 8,
+    skill: 10,
+    spd: 6,
+    luck: 4,
+    def: 4,
+    weapon: { name: "铁剑", type: "sword", mt: 5, hit: 90, wt: 5 }
+  };
+  var b = {
+    name: "乙",
+    hp: 20,
+    maxHp: 20,
+    str: 6,
+    skill: 4,
+    spd: 5,
+    luck: 2,
+    def: 5,
+    weapon: { name: "铁枪", type: "lance", mt: 7, hit: 80, wt: 8 }
+  };
+  var r = C.resolveDuel(a, b, rngFrom([0, 99, 0, 99]));
+  assert.strictEqual(r.log.length, 2);
+  assert.strictEqual(a.weapon.uses, undefined);
+  assert.strictEqual(b.weapon.uses, undefined);
+});
+
+test("有 uses 时每挥一次消耗 1 点；耗尽后无法再造成伤害", function () {
+  var a = {
+    name: "甲",
+    hp: 30,
+    maxHp: 30,
+    str: 10,
+    skill: 20,
+    spd: 6,
+    luck: 0,
+    def: 0,
+    weapon: { name: "铁剑", type: "sword", mt: 5, hit: 100, wt: 5, uses: 1 }
+  };
+  var b = {
+    name: "乙",
+    hp: 30,
+    maxHp: 30,
+    str: 1,
+    skill: 1,
+    spd: 1,
+    luck: 0,
+    def: 0,
+    weapon: { name: "铁枪", type: "lance", mt: 1, hit: 100, wt: 8, uses: 5 }
+  };
+  var r = C.resolveDuel(a, b, rngFrom([0, 99, 0, 99, 0, 99, 0, 99]), { maxRounds: 2 });
+  assert.strictEqual(a.weapon.uses, 0);
+  assert.strictEqual(b.weapon.uses, 3);
+  assert.strictEqual(r.log[0].result, "hit");
+  assert.ok(r.log[0].damage > 0);
+  var secondA = r.log.filter(function (ev) { return ev.side === "a"; })[1];
+  assert.ok(secondA);
+  assert.strictEqual(secondA.result, "broke");
+  assert.strictEqual(secondA.damage, 0);
+});
+
 console.log(results.join("\n"));
 console.log("\n" + passed + " / " + results.length + " tests passed.");
