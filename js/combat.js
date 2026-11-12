@@ -1,5 +1,5 @@
 /**
- * 灰灯镇 · 战斗与成长公式（火纹式）
+ * 灰灯镇 · 战斗与成长公式
  *
  * 命中判定：先将命中率夹取到 0–100（保留幸运带来的 0.5 小数），
  * 再向下取整得到判定阈值；掷出 0–99 的整数，若 roll < 阈值则命中。
@@ -27,7 +27,7 @@
   }
 
   /**
-   * 烈火之剑武器三角：剑克斧、斧克枪、枪克剑。
+   * 武器三角：剑克斧、斧克枪、枪克剑。
    * 克制 +1 威力、+15 命中；被克制 −1 威力、−15 命中。
    * 弓不参与；缺类型或双方同类型则无修正。
    */
@@ -272,7 +272,7 @@
   }
 
   /**
-   * 回合顺序（经典火纹）：先手先攻，防守方若仍存活则反击一次，
+   * 回合顺序：先手先攻，防守方若仍存活则反击一次，
    * 然后各自若满足追击条件再追加一击。双方追击彼此独立。
    * 任一战斗者 HP 归零即停止。双方在展示对打中均可反击。
    *
@@ -283,10 +283,13 @@
     var a = applyTriangle(snapshot(unitA), snapshot(unitB));
     var b = applyTriangle(snapshot(unitB), snapshot(unitA));
     var log = [];
+    var untilDown = !!(opts && opts.untilDown);
     var maxRounds = opts && opts.maxRounds != null ? opts.maxRounds : 1;
-    var round, i, order, side, atk, def, strike, hpBefore, stale;
+    var round, i, order, side, atk, def, strike, hpBefore, stale, lastHit;
+    if (untilDown && maxRounds < 200) maxRounds = 200;
 
     stale = 0;
+    lastHit = "a";
     for (round = 0; round < maxRounds; round++) {
       if (a.hp <= 0 || b.hp <= 0) break;
       hpBefore = a.hp + b.hp;
@@ -300,7 +303,19 @@
         atk = side === "a" ? a : b;
         def = side === "a" ? b : a;
         strike = resolveStrike(atk, def, rng);
+        if (untilDown && strike.damage <= 0 && a.hp + b.hp === hpBefore && i === order.length - 1 && stale >= 1) {
+          strike = {
+            result: "hit",
+            hit: true,
+            crit: false,
+            damage: 1,
+            hitRoll: strike.hitRoll,
+            critRoll: strike.critRoll,
+            threshold: strike.threshold
+          };
+        }
         def.hp = Math.max(0, def.hp - strike.damage);
+        if (strike.damage > 0) lastHit = side;
         log.push({
           side: side,
           actor: atk.name,
@@ -320,14 +335,14 @@
       if (a.hp <= 0 || b.hp <= 0) break;
       if (a.hp + b.hp === hpBefore) {
         stale += 1;
-        if (stale >= 2) break;
+        if (!untilDown && stale >= 2) break;
       } else {
         stale = 0;
       }
     }
 
     var winner = null;
-    if (a.hp <= 0 && b.hp <= 0) winner = "draw";
+    if (a.hp <= 0 && b.hp <= 0) winner = untilDown ? lastHit : "draw";
     else if (b.hp <= 0) winner = "a";
     else if (a.hp <= 0) winner = "b";
     else winner = "draw";

@@ -123,7 +123,7 @@
         ? t("dungeon.forecast", { name: displayName(boss) })
         : t("dungeon.foeTurn", { name: displayName(boss) });
     }
-    if (ctx.kind === "guild") return t("guild.questName");
+    if (ctx.kind === "guild") return t("guild.huntName");
     if (ctx.kind === "arena") return t("arena.titleOf", { name: displayName(ctx.def) });
     return ctx.title || "";
   }
@@ -188,10 +188,16 @@
       ["a", "b"].forEach(function (id) {
         var unit = pendingBattle && (id === "a" ? pendingBattle.atk : pendingBattle.def);
         if (!unit) return;
-        var nm = $("#hp-win-" + id + " .nm");
-        var cl = $("#hp-win-" + id + " .cl");
+        var nm = $("#ba-name-" + id);
         if (nm) nm.textContent = displayName(unit);
-        if (cl) cl.textContent = classNameOf(unit);
+        var wpn = $("#ba-wpn-" + id);
+        if (wpn) wpn.textContent = weaponName(unit.weapon || unit.weaponId);
+        var hit = $("#ba-hit-" + id + " .lab");
+        if (hit) {
+          $("#ba-hit-" + id + " .lab").textContent = t("ba.hit");
+          $("#ba-dmg-" + id + " .lab").textContent = t("ba.dmg");
+          $("#ba-crt-" + id + " .lab").textContent = t("ba.crt");
+        }
       });
     }
   }
@@ -312,13 +318,22 @@
   }
   function mugSrc(person, foe) {
     var id = typeof person === "string" ? person : artClass(person);
-    if (id === "dummy") return "assets/units/mug-dummy.png";
-    return "assets/units/mug-" + id + (foe ? "-foe" : "") + ".png";
+    if (id === "dummy") return "assets/units/mug-dummy.webp";
+    return "assets/units/mug-" + id + (foe ? "-foe" : "") + ".webp";
   }
-  function standSrc(person, foe, facing) {
+  function standSrc(person, foe, facing, pose) {
     var id = artClass(person);
-    if (id === "dummy") return "assets/units/stand-dummy-" + facing + ".png";
-    return "assets/units/stand-" + id + "-" + facing + (foe ? "-foe" : "") + ".png";
+    var extra = pose === "atk" ? "-atk" : "";
+    if (id === "dummy") return "assets/units/stand-dummy-" + facing + ".webp";
+    return "assets/units/stand-" + id + "-" + facing + extra + (foe ? "-foe" : "") + ".webp";
+  }
+  function weaponKind(person) {
+    if (person && person.weapon && person.weapon.type) return person.weapon.type;
+    var id = artClass(person);
+    if (id === "archer") return "bow";
+    if (id === "cavalier" || id === "armor") return "lance";
+    if (id === "fighter") return "axe";
+    return "sword";
   }
   function mugTag(person, foe, clsName) {
     return (
@@ -417,7 +432,9 @@
       def: b.def,
       weaponId: cls.startingWeapon,
       weapons: [cls.startingWeapon],
-      dungeonLockUntil: 0
+      dungeonLockUntil: 0,
+      dungeonFoughtUntil: 0,
+      classBonusApplied: true
     };
   }
 
@@ -443,6 +460,9 @@
     if (u.hp > u.maxHp) u.hp = u.maxHp;
     if (u.level >= D.LEVEL_CAP) u.exp = 0;
     if (typeof raw.dungeonLockUntil === "number") u.dungeonLockUntil = raw.dungeonLockUntil;
+    if (typeof raw.dungeonFoughtUntil === "number") u.dungeonFoughtUntil = raw.dungeonFoughtUntil;
+    u.classBonusApplied = !!raw.classBonusApplied;
+    if (!u.classBonusApplied) applyClassBonusOnce(u);
     ensureLanceLoadout(u);
     return u;
   }
@@ -460,16 +480,24 @@
     return {
       party: D.PARTY_ORDER.map(function (id) { return newUnit(D.CLASSES[id].name, id); }),
       activeId: D.PARTY_ORDER[0],
-      gold: D.GOLD_CAP,
+      gold: D.START_GOLD,
       items: { tonic: 0 },
       day: 1,
       period: 0,
-      quests: pickQuests(1),
-      guildQuest: generateGuildQuest(1, 1),
+      quests: [],
+      guildQuest: null,
       arenaRoster: generateArenaRoster(1, 1),
       introShown: false,
       restedAtInn: false,
-      lastGoldTick: Date.now()
+      lastGoldTick: Date.now(),
+      economyRev: D.ECONOMY_REV,
+      guildId: null,
+      guildPoints: emptyGuildPoints(),
+      arenaPoints: 0,
+      guildJoinedAt: 0,
+      arenaSeasonStart: Date.now(),
+      arenaBoard: generateArenaBoard(Date.now()),
+      arenaPrizeNote: null
     };
   }
 
@@ -514,20 +542,33 @@
       var period = typeof data.period === "number" ? C.clamp(Math.floor(data.period), 0, 2) : 0;
       var lastTick = typeof data.lastGoldTick === "number" ? data.lastGoldTick : Date.now();
 
-      return {
+      var gold = D.START_GOLD;
+      if (typeof data.gold === "number" && data.gold > gold) gold = data.gold;
+      if (gold < 0) gold = 0;
+
+      var ret = {
         party: party,
         activeId: activeId,
-        gold: D.GOLD_CAP,
+        gold: gold,
         items: { tonic: tonic },
         day: day,
         period: period,
-        quests: Array.isArray(data.quests) ? data.quests : pickQuests(day),
-        guildQuest: data.guildQuest || generateGuildQuest(day, partyMaxOf(party)),
+        quests: Array.isArray(data.quests) ? data.quests : [],
+        guildQuest: data.guildQuest || null,
         arenaRoster: Array.isArray(data.arenaRoster) ? data.arenaRoster : generateArenaRoster(day, partyMaxOf(party)),
         introShown: !!data.introShown,
         restedAtInn: !!data.restedAtInn,
-        lastGoldTick: lastTick
+        lastGoldTick: lastTick,
+        economyRev: D.ECONOMY_REV,
+        guildId: data.guildId && D.GUILDS[data.guildId] ? data.guildId : null,
+        guildPoints: normalizeGuildPoints(data.guildPoints),
+        arenaPoints: typeof data.arenaPoints === "number" ? Math.max(0, Math.floor(data.arenaPoints)) : 0,
+        guildJoinedAt: typeof data.guildJoinedAt === "number" ? data.guildJoinedAt : 0,
+        arenaSeasonStart: typeof data.arenaSeasonStart === "number" ? data.arenaSeasonStart : Date.now(),
+        arenaBoard: boardHasGuilds(data.arenaBoard) ? data.arenaBoard : generateArenaBoard(data.arenaSeasonStart || Date.now()),
+        arenaPrizeNote: data.arenaPrizeNote || null
       };
+      return ret;
     } catch (e) {
       return null;
     }
@@ -551,14 +592,77 @@
   function partyMaxLevel() {
     return state ? partyMaxOf(state.party) : 1;
   }
+  function formatGold(n) {
+    var x = D.money(n);
+    if (Math.abs(x - Math.round(x)) < 1e-9) return String(Math.round(x));
+    return x.toFixed(2);
+  }
+  function formatTick(n) {
+    var x = Number(n);
+    if (!isFinite(x) || x === 0) return "0";
+    if (Math.abs(x) >= 1) return formatGold(x);
+    var s = x.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    return s;
+  }
+  function goldBonus() {
+    return 1 + (D.GOLD_BONUS || D.GUILD_GOLD_BONUS || 0.05);
+    return 1;
+  }
+  function unitDaily(u) {
+    return D.money(D.dailyIncome(u && u.level ? u.level : 1) * goldBonus());
+  }
+  function unitTick(u) {
+    return D.tickIncome(u && u.level ? u.level : 1) * goldBonus();
+  }
   function goldRate() {
     var n = 0, i;
     if (!state || !state.party) return 0;
-    for (i = 0; i < state.party.length; i++) n += state.party[i].level;
+    for (i = 0; i < state.party.length; i++) n += unitTick(state.party[i]);
     return n;
   }
   function goldPerDay() {
-    return goldRate() * D.TICKS_PER_DAY;
+    var n = 0, i;
+    if (!state || !state.party) return 0;
+    for (i = 0; i < state.party.length; i++) n += unitDaily(state.party[i]);
+    return D.money(n);
+  }
+  function paybackDays(level) {
+    if (level >= D.LEVEL_CAP) return 0;
+    var gain = (D.dailyIncome(level + 1) - D.dailyIncome(level)) * goldBonus();
+    if (gain <= 0) return 0;
+    return D.money(trainFee(level) / gain);
+  }
+  function trainFee(level) {
+    return D.money(D.trainCost(level) * goldBonus());
+  }
+  function classBonusLine(classId) {
+    var b = D.CLASSES[classId] && D.CLASSES[classId].bonus;
+    var parts = [], i, k;
+    if (!b) return "";
+    for (i = 0; i < STAT_KEYS.length; i++) {
+      k = STAT_KEYS[i];
+      if (b[k]) parts.push(statLabel(k) + " +" + b[k]);
+    }
+    if (!parts.length) return "";
+    return t("train.bonus", { bonus: parts.join("　") });
+  }
+  function applyClassBonusOnce(u) {
+    var b, k, i;
+    if (!u || u.classBonusApplied) return;
+    b = D.CLASSES[u.classId] && D.CLASSES[u.classId].bonus;
+    if (b) {
+      for (i = 0; i < STAT_KEYS.length; i++) {
+        k = STAT_KEYS[i];
+        if (!b[k]) continue;
+        if (k === "hp") {
+          u.maxHp += b[k];
+          u.hp += b[k];
+        } else {
+          u[k] += b[k];
+        }
+      }
+    }
+    u.classBonusApplied = true;
   }
   function healPartyFull() {
     var i, u;
@@ -630,10 +734,7 @@
     return shufflePick(D.QUEST_POOL, 3, roll).map(function (q) {
       return {
         id: q.id,
-        name: q.name,
-        desc: q.desc,
-        gold: q.gold,
-        exp: q.exp,
+        points: q.points,
         done: false
       };
     });
@@ -656,10 +757,7 @@
     var wId = lv >= 5 ? steelFor(cid) : D.CLASSES[cid].startingWeapon;
     var unit = rollUnit(cid, lv, roll, name, wId);
     return {
-      name: "guild.questName",
-      desc: "",
-      gold: 100,
-      exp: 52,
+      points: D.GUILD_HUNT_POINTS,
       unit: unit,
       done: false
     };
@@ -696,6 +794,33 @@
     return roster;
   }
 
+  function generateArenaBoard(seed) {
+    var roll = C.createRng(C.seededRandom((seed || Date.now()) + 7753));
+    return D.GUILD_ORDER.map(function (id) {
+      return { guildId: id, rate: 10 + roll.int(0, 10) };
+    });
+  }
+  function boardHasGuilds(board) {
+    return Array.isArray(board) && board.length === D.GUILD_ORDER.length &&
+      board.every(function (n) { return n && n.guildId && D.GUILDS[n.guildId]; });
+  }
+  function emptyGuildPoints() {
+    var o = {}, i;
+    for (i = 0; i < D.GUILD_ORDER.length; i++) o[D.GUILD_ORDER[i]] = 0;
+    return o;
+  }
+  function normalizeGuildPoints(src) {
+    var o = emptyGuildPoints();
+    var i, id;
+    if (src && typeof src === "object") {
+      for (i = 0; i < D.GUILD_ORDER.length; i++) {
+        id = D.GUILD_ORDER[i];
+        if (typeof src[id] === "number" && src[id] > 0) o[id] = Math.floor(src[id]);
+      }
+    }
+    return o;
+  }
+
   function startFresh() {
     state = emptyState();
     state.gold = D.START_GOLD;
@@ -708,11 +833,158 @@
     state.day += 1;
     state.period = 0;
     state.restedAtInn = false;
-    state.quests = pickQuests(state.day);
-    state.guildQuest = generateGuildQuest(state.day, partyMaxLevel());
+    state.quests = [];
+    state.guildQuest = null;
     state.arenaRoster = generateArenaRoster(state.day, partyMaxLevel());
     renderHud();
     save();
+  }
+
+  function guildName(id) {
+    return t("guild." + id + ".name");
+  }
+  function questName(id) {
+    return t("quest." + id + ".name");
+  }
+  function questDesc(id) {
+    return t("quest." + id + ".desc");
+  }
+  function currentGuildPoints() {
+    if (!state || !state.guildId) return 0;
+    if (!state.guildPoints) state.guildPoints = {};
+    return state.guildPoints[state.guildId] || 0;
+  }
+  function currentPersonalPoints() {
+    return state && typeof state.arenaPoints === "number" ? state.arenaPoints : 0;
+  }
+  function addGuildPoints(n) {
+    if (!state || !state.guildId || !n) return 0;
+    if (!state.guildPoints) state.guildPoints = {};
+    state.guildPoints[state.guildId] = (state.guildPoints[state.guildId] || 0) + n;
+    return n;
+  }
+  function addPersonalPoints(n) {
+    if (!state || !n) return 0;
+    state.arenaPoints = (state.arenaPoints || 0) + n;
+    addGuildPoints(n);
+    return n;
+  }
+  function guildSwitchLeft(now) {
+    now = now || Date.now();
+    if (!state || !state.guildId || !state.guildJoinedAt) return 0;
+    var left = state.guildJoinedAt + (D.GUILD_LOCK_MS || 86400000) - now;
+    return left > 0 ? left : 0;
+  }
+  function formatSeasonTime(ms) {
+    if (ms < 0) ms = 0;
+    var d = Math.floor(ms / 86400000);
+    var h = Math.floor((ms % 86400000) / 3600000);
+    var zh = I18n.getLang && String(I18n.getLang()).indexOf("zh") === 0;
+    if (zh) {
+      if (d <= 0) return h + " 小时";
+      return d + " 天 " + h + " 小时";
+    }
+    if (d <= 0) return h + "h";
+    return d + "d " + h + "h";
+  }
+  function npcPointsAt(npc, start, now) {
+    var ms = now - start;
+    if (ms < 0) ms = 0;
+    if (ms > D.ARENA_SEASON_MS) ms = D.ARENA_SEASON_MS;
+    return Math.floor((npc.rate || 0) * (ms / 86400000));
+  }
+  function guildNpcPoints(guildId, start, now) {
+    var board = state.arenaBoard || [];
+    var i, n, sum = 0;
+    for (i = 0; i < board.length; i++) {
+      n = board[i];
+      if (n && n.guildId === guildId) sum += npcPointsAt(n, start, now);
+    }
+    return sum;
+  }
+  function leaderboardRows(atTime) {
+    var now = atTime != null ? atTime : Date.now();
+    var start = state.arenaSeasonStart || now;
+    var rows = [];
+    var i, id, pts;
+    for (i = 0; i < D.GUILD_ORDER.length; i++) {
+      id = D.GUILD_ORDER[i];
+      pts = ((state.guildPoints && state.guildPoints[id]) || 0) + guildNpcPoints(id, start, now);
+      rows.push({
+        id: id,
+        name: guildName(id),
+        points: pts,
+        you: state.guildId === id
+      });
+    }
+    rows.sort(function (a, b) {
+      if (b.points !== a.points) return b.points - a.points;
+      if (a.you) return -1;
+      if (b.you) return 1;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    return rows;
+  }
+  function playerRank(rows) {
+    var i;
+    if (!state || !state.guildId) return 0;
+    for (i = 0; i < rows.length; i++) if (rows[i].you) return i + 1;
+    return 0;
+  }
+  function settleArenaSeason() {
+    if (!state) return;
+    if (!boardHasGuilds(state.arenaBoard)) {
+      state.arenaBoard = generateArenaBoard(state.arenaSeasonStart || Date.now());
+    }
+    if (typeof state.arenaSeasonStart !== "number") state.arenaSeasonStart = Date.now();
+    state.guildPoints = normalizeGuildPoints(state.guildPoints);
+    if (typeof state.arenaPoints !== "number") state.arenaPoints = 0;
+    var now = Date.now();
+    var notes = [];
+    var end, rows, rank, prize, joined;
+    while (now - state.arenaSeasonStart >= D.ARENA_SEASON_MS) {
+      end = state.arenaSeasonStart + D.ARENA_SEASON_MS;
+      rows = leaderboardRows(end);
+      rank = playerRank(rows);
+      joined = !!state.guildId;
+      prize = joined && rank >= 1 && rank <= 3 ? D.ARENA_PRIZES[rank - 1] : 0;
+      if (prize > 0) addGold(prize);
+      notes.push({ rank: rank, gold: prize, joined: joined });
+      state.guildPoints = emptyGuildPoints();
+      state.arenaPoints = 0;
+      state.arenaSeasonStart = end;
+      state.arenaBoard = generateArenaBoard(end);
+    }
+    if (notes.length) {
+      state.arenaPrizeNote = notes[notes.length - 1];
+    }
+  }
+  function showArenaPrizeNote() {
+    var note = state && state.arenaPrizeNote;
+    if (!note) return false;
+    state.arenaPrizeNote = null;
+    save();
+    var body =
+      "<p>" + t("arena.seasonOver") + "</p><p>" +
+      (note.gold > 0
+        ? t("arena.prizeWin", { rank: note.rank, gold: formatGold(note.gold) })
+        : note.joined === false || !note.rank
+        ? t("arena.prizeNone")
+        : t("arena.prizeMiss", { rank: note.rank })) +
+      "</p>" +
+      actions({ "arena-after-prize": t("ui.ok") });
+    openModal(panel(t("arena.board"), body, "narrow"));
+    return true;
+  }
+  function makeArenaFoe() {
+    var p = active();
+    var roll = rng();
+    var cid = D.CLASS_ORDER[roll.int(0, D.CLASS_ORDER.length - 1)];
+    var names = D.ENEMY_NAMES[cid];
+    var name = names[roll.int(0, names.length - 1)];
+    var lv = C.clamp(p.level + roll.int(-1, 2), 1, D.LEVEL_CAP);
+    var wId = lv >= 6 ? steelFor(cid) : D.CLASSES[cid].startingWeapon;
+    return rollUnit(cid, lv, roll, name, wId);
   }
 
   /* ---------- 成长与物品 ---------- */
@@ -749,7 +1021,6 @@
     var before = state.gold;
     var g = before + n;
     if (g < 0) g = 0;
-    if (g > D.GOLD_CAP) g = D.GOLD_CAP;
     state.gold = g;
     return g - before;
   }
@@ -841,12 +1112,22 @@
     return false;
   }
 
+  function clearFoughtIfDue(u, now) {
+    if (!u) return false;
+    if (typeof u.dungeonFoughtUntil === "number" && u.dungeonFoughtUntil > 0 && u.dungeonFoughtUntil <= now) {
+      u.dungeonFoughtUntil = 0;
+      return true;
+    }
+    return false;
+  }
+
   function refreshLocks(now) {
     now = now || Date.now();
     var changed = false, i;
     if (!state || !state.party) return false;
     for (i = 0; i < state.party.length; i++) {
       if (clearLockIfDue(state.party[i], now)) changed = true;
+      if (clearFoughtIfDue(state.party[i], now)) changed = true;
     }
     return changed;
   }
@@ -857,10 +1138,27 @@
     return !!(u && typeof u.dungeonLockUntil === "number" && u.dungeonLockUntil > now);
   }
 
+  function isDungeonFought(u, now) {
+    now = now || Date.now();
+    clearFoughtIfDue(u, now);
+    return !!(u && typeof u.dungeonFoughtUntil === "number" && u.dungeonFoughtUntil > now);
+  }
+
+  function canDungeonFight(u, now) {
+    now = now || Date.now();
+    return !!(u && u.hp > 0 && !isDungeonLocked(u, now) && !isDungeonFought(u, now));
+  }
+
   function lockUnit(u, now) {
     if (!u) return;
     now = now || Date.now();
     u.dungeonLockUntil = nextUnlockMs(now);
+  }
+
+  function markDungeonFought(u, now) {
+    if (!u) return;
+    now = now || Date.now();
+    u.dungeonFoughtUntil = nextUnlockMs(now);
   }
 
   function lockoutLabel(u) {
@@ -869,6 +1167,13 @@
     var nowP = shanghaiParts(Date.now());
     if (p.y === nowP.y && p.m === nowP.m && p.d === nowP.d) return t("lock.today");
     return t("lock.tomorrow");
+  }
+
+  function dungeonLimitLabel(u) {
+    if (isDungeonLocked(u)) return lockoutLabel(u);
+    if (isDungeonFought(u)) return t("lock.fought");
+    if (u && u.hp <= 0) return t("lock.noHp");
+    return "";
   }
 
   function unitById(classId) {
@@ -924,31 +1229,37 @@
         ? t("hud.levelCap")
         : "EXP " + p.exp + "/" + D.EXP_PER_LEVEL;
     var rate = goldRate();
-    var full = state.gold >= D.GOLD_CAP;
-    var incomeLine = full
-      ? t("hud.goldFull")
-      : t("hud.income", { rate: rate }) + "　" + t("hud.incomeDay", { day: rate * D.TICKS_PER_DAY });
+    var dayGold = goldPerDay();
+    var incomeLine = t("hud.income", { rate: formatTick(rate) }) + "　" + t("hud.incomeDay", { day: formatGold(dayGold) });
     var roster = state.party
       .map(function (u) {
-        var lock = lockoutLabel(u);
+        var down = isDungeonLocked(u);
+        var fought = !down && isDungeonFought(u);
+        var tag = down ? t("hud.defeated") : fought ? t("hud.fought") : "";
+        var tip = dungeonLimitLabel(u);
+        var mateHp = Math.round((u.hp / Math.max(1, u.maxHp)) * 100);
         return (
           '<button type="button" class="hud-mate' +
           (u.classId === p.classId ? " selected" : "") +
-          (lock ? " locked" : "") +
+          (down || fought ? " locked" : "") +
           '" data-act="select-unit" data-id="' +
           u.classId +
           '" title="' +
           esc(displayName(u)) +
-          (lock ? "　" + lock : "") +
+          (tip ? "　" + tip : "") +
           '">' +
           mugTag(u, false, "mug") +
-          '<span class="nm">' +
+          '<span class="hud-mate-info"><span class="nm">' +
           esc(classNameOf(u)) +
           '</span><span class="lv">Lv.' +
           u.level +
+          "　" + u.hp + "/" + u.maxHp +
           "</span>" +
-          (lock ? '<span class="lock-tag">' + t("hud.defeated") + "</span>" : "") +
-          "</button>"
+          '<span class="hud-bar hp' + (mateHp <= 30 ? " warn" : "") + '">' +
+          hpTrack(u.hp, u.maxHp) +
+          "</span>" +
+          (tag ? '<span class="lock-tag">' + tag + "</span>" : "") +
+          "</span></button>"
         );
       })
       .join("");
@@ -979,12 +1290,7 @@
       '<button type="button" class="fe-cmd" data-act="stats">' +
       t("ui.stats") +
       '</button></div>' +
-      '<div class="hud-party" title="' +
-      esc(t("hud.pickUnit")) +
-      '">' +
-      roster +
-      "</div>" +
-      '<div class="hud-meta"><div class="place">' +
+      '<div class="hud-side"><div class="hud-meta"><div class="place">' +
       (TownMap.currentMap && TownMap.currentMap() === "wilds" ? t("place.wildsMap") : t("place.town")) +
       "</div><div>" +
       t("hud.day", { day: pDay() }) +
@@ -993,19 +1299,33 @@
       '</div><div class="gold">' +
       t("hud.gold") +
       "　" +
-      state.gold +
+      formatGold(state.gold) +
       '</div><div class="income">' +
       incomeLine +
+      '</div><div>' +
+      t("hud.personal", { points: currentPersonalPoints() }) +
+      '</div><div>' +
+      (state.guildId
+        ? t("hud.points", { points: currentGuildPoints() })
+        : t("hud.noGuild")) +
+      "　" + t("hud.goldBonus") +
       '</div>' +
       langSwitcher(true) +
-      '<span id="gold-pop" class="gold-pop" hidden></span></div>';
+      '<span id="gold-pop" class="gold-pop" hidden></span></div>' +
+      '<div class="hud-party" title="' +
+      esc(t("hud.pickUnit")) +
+      '"><div class="hud-party-title">' +
+      esc(t("hud.party")) +
+      "</div><div class=\"hud-party-list\">" +
+      roster +
+      "</div></div></div>";
   }
 
   function showGoldPop(amount) {
     var el = $("#gold-pop");
     if (!el) return;
     el.hidden = false;
-    el.textContent = amount > 0 ? "+" + amount : t("hud.goldFull");
+    el.textContent = amount > 0 ? "+" + formatGold(amount) : "+" + formatGold(0);
     el.classList.remove("show");
     void el.offsetWidth;
     el.classList.add("show");
@@ -1032,11 +1352,9 @@
 
   function applyIncomeTicks(ticks, showPop) {
     if (!state || ticks <= 0) return 0;
-    if (state.gold >= D.GOLD_CAP) return 0;
     var gained = addGold(goldRate() * ticks);
     renderHud();
     if (showPop && gained > 0) showGoldPop(gained);
-    else if (showPop && state.gold >= D.GOLD_CAP) showGoldPop(0);
     var view = $("#modal") && $("#modal").dataset.view;
     if (view === "statue") openStatue(false);
     else if (view === "bank") openBank();
@@ -1060,6 +1378,7 @@
 
   function incomeLoop() {
     if (!state) return;
+    settleArenaSeason();
     var now = Date.now();
     if (incomePaused()) {
       if (incomePauseAt) state.lastGoldTick += now - incomePauseAt;
@@ -1171,8 +1490,18 @@
     }
   }
 
-  function makeBossFighter(hp) {
+  function randomIronWeaponId(roll) {
+    var list = D.IRON_WEAPONS || ["iron-sword", "iron-lance", "iron-axe", "iron-bow"];
+    return list[(roll || rng()).int(0, list.length - 1)];
+  }
+
+  function makeBossFighter(hp, weaponId) {
     var b = D.DUNGEON_BOSS;
+    var wId = weaponId;
+    if (!wId && dungeonRun && dungeonRun.boss && dungeonRun.boss.weapon && dungeonRun.boss.weapon.id) {
+      wId = dungeonRun.boss.weapon.id;
+    }
+    if (!wId) wId = b.weaponId;
     return {
       name: b.name,
       classId: b.classId,
@@ -1185,16 +1514,15 @@
       spd: b.spd,
       luck: b.luck,
       def: b.def,
-      weapon: D.copyWeapon(b.weaponId)
+      weapon: D.copyWeapon(wId)
     };
   }
 
   function openDungeonDeploy() {
     refreshLocks();
     var rows = state.party.map(function (u) {
-      var lock = lockoutLabel(u);
-      var down = u.hp <= 0;
-      var disabled = !!(lock || down);
+      var limit = dungeonLimitLabel(u);
+      var disabled = !canDungeonFight(u);
       return (
         '<label class="deploy-row' +
         (disabled ? " is-locked" : "") +
@@ -1216,7 +1544,7 @@
         u.maxHp +
         "　" +
         esc(u.weaponId ? weaponName(u.weaponId) : "") +
-        (lock ? "　" + lock : down ? "　" + t("lock.noHp") : "") +
+        (limit ? "　" + limit : "") +
         "</p></div></label>"
       );
     }).join("");
@@ -1254,7 +1582,7 @@
     dungeonRun = {
       ids: ids.slice(),
       living: ids.slice(),
-      boss: makeBossFighter(),
+      boss: makeBossFighter(null, randomIronWeaponId()),
       lastAtk: null,
       phase: "player"
     };
@@ -1284,7 +1612,9 @@
       return;
     }
     var b = dungeonRun.boss;
+    var ready = living.filter(function (u) { return canDungeonFight(u); });
     var rows = living.map(function (u) {
+      var can = canDungeonFight(u);
       return (
         '<div class="list-item"><div class="info">' +
         mugTag(u, false, "mug") +
@@ -1298,14 +1628,19 @@
         u.maxHp +
         "　" +
         esc(weaponName(u.weaponId)) +
+        (can ? "" : "　" + t("dungeon.foughtToday")) +
         "</p></div>" +
-        '<button type="button" class="btn" data-act="dungeon-atk" data-id="' +
-        u.classId +
-        '">' + t("dungeon.attack") + '</button></div>'
+        (can
+          ? '<button type="button" class="btn" data-act="dungeon-atk" data-id="' +
+            u.classId +
+            '">' + t("dungeon.attack") + '</button>'
+          : "") +
+        "</div>"
       );
     }).join("");
     var body =
       "<p>" + t("dungeon.roomLead") + "</p>" +
+      (ready.length ? "" : "<p class='muted'>" + t("dungeon.allFought") + "</p>") +
       '<div class="boss-card">' +
       mugTag(b, true, "mug") +
       "<div><h4>" +
@@ -1334,7 +1669,7 @@
 
   function beginDungeonAttack(classId) {
     var u = unitById(classId);
-    if (!dungeonRun || !u || u.hp <= 0) return;
+    if (!dungeonRun || !u || !canDungeonFight(u)) return;
     setActive(classId);
     dungeonRun.lastAtk = classId;
     dungeonRun.phase = "player";
@@ -1383,6 +1718,7 @@
       boss.hp = Math.max(0, result.aHp);
       unit.hp = Math.max(0, result.bHp);
     }
+    if (ctx.playerIsA) markDungeonFought(unit);
     var unitDead = unit.hp <= 0;
     if (unitDead) {
       lockUnit(unit);
@@ -1464,25 +1800,16 @@
   }
 
   function finishDungeonWin(forcedCopper) {
-    var b = D.DUNGEON_BOSS;
-    var goldGain = addGold(b.rewardGold);
-    var events = [];
-    var i, u, ids, drop, dropLine;
+    var ids, drop;
     ids = dungeonRun ? dungeonRun.ids : state.party.map(function (p) { return p.classId; });
-    for (i = 0; i < ids.length; i++) {
-      u = unitById(ids[i]);
-      if (!u) continue;
-      if (u.hp > 0) events = events.concat(gainExpFor(u, b.rewardExp));
-      else events = events.concat(gainExpFor(u, Math.round(b.rewardExp * 0.5)));
-    }
     drop = grantCopperReward(ids, forcedCopper || state._forceCopper || null);
     state._forceCopper = null;
-    pendingLevelUps = events;
+    pendingLevelUps = [];
     dungeonRun = null;
     closeBattle();
     renderHud();
     save();
-    lastVictory = { goldGain: goldGain, drop: drop };
+    lastVictory = { goldGain: 0, drop: drop };
     renderDungeonWin();
   }
 
@@ -1513,31 +1840,86 @@
     save();
   }
 
+  function openGuildJoin() {
+    var lockLeft = guildSwitchLeft();
+    var cards = D.GUILD_ORDER.map(function (id) {
+      var current = state.guildId === id;
+      var canJoin = !current && !lockLeft;
+      return (
+        '<div class="guild-card"><h4>' +
+        esc(guildName(id)) +
+        (current ? "　" + t("guild.joined") : "") +
+        "</h4><p>" +
+        esc(t("guild." + id + ".blurb")) +
+        "</p>" +
+        (canJoin
+          ? '<button type="button" class="btn" data-act="join-guild" data-id="' + id + '">' + t("guild.join") + "</button>"
+          : current ? "" : "<p class='muted'>" + t("guild.lockWait", { time: formatSeasonTime(lockLeft) }) + "</p>") +
+        "</div>"
+      );
+    }).join("");
+    var body =
+      "<p class='lead'>" + t("guild.joinLead") + "</p>" +
+      (lockLeft ? "<p class='muted'>" + t("guild.lockWait", { time: formatSeasonTime(lockLeft) }) + "</p>" : "") +
+      '<div class="guild-pick">' + cards + "</div>" +
+      actions({ leave: t("ui.leave") });
+    openModal(panel(t("guild.title"), body, "wide"));
+    setView("guild-join");
+  }
+
+  function rankTableHtml() {
+    var now = Date.now();
+    var rows = leaderboardRows(now);
+    var table = rows.map(function (row, i) {
+      return (
+        "<tr class='" + (row.you ? "you" : "") + "'><td>" +
+        (i + 1) +
+        "</td><td>" +
+        esc(row.name) +
+        (row.you ? "　" + t("arena.youMark") : "") +
+        "</td><td>" +
+        row.points +
+        "</td></tr>"
+      );
+    }).join("");
+    var left = D.ARENA_SEASON_MS - (now - (state.arenaSeasonStart || now));
+    return (
+      "<p class='rank-prize'>" + t("arena.prizes") + "</p>" +
+      "<p class='muted'>" + t("arena.seasonLeft", { time: formatSeasonTime(left) }) + "</p>" +
+      "<table class='rank-table'><thead><tr><th>" +
+      t("arena.rank") +
+      "</th><th>" +
+      t("arena.fighter") +
+      "</th><th>" +
+      t("arena.score") +
+      "</th></tr></thead><tbody>" +
+      table +
+      "</tbody></table>"
+    );
+  }
   function openGuild() {
-    var g = state.guildQuest;
-    var unit = g.unit || {};
+    settleArenaSeason();
+    if (!state.guildId) {
+      openGuildJoin();
+      return;
+    }
+    var lockLeft = guildSwitchLeft();
     var body =
       "<p>" + t("guild.lead") + "</p>" +
+      "<p>" + t("guild.current", { name: guildName(state.guildId) }) + "　" +
+      t("guild.points", { points: currentGuildPoints() }) + "　" +
+      t("arena.points", { points: currentPersonalPoints() }) + "</p>" +
+      (lockLeft ? "<p class='muted'>" + t("guild.lockWait", { time: formatSeasonTime(lockLeft) }) + "</p>" : "") +
       '<div class="tabs">' +
-      '<button type="button" class="tab active" data-act="guild-job">' + t("guild.tabJob") + '</button>' +
+      '<button type="button" class="tab active" data-act="guild-job">' + t("guild.tabBoard") + '</button>' +
       '<button type="button" class="tab" data-act="guild-rules">' + t("guild.tabRules") + '</button>' +
       '<button type="button" class="tab" data-act="stats">' + t("guild.tabStats") + '</button>' +
       "</div>" +
-      '<div class="list-item' +
-      (g.done ? " done" : "") +
-      '"><div class="info"><h4>' +
-      esc(t("guild.questName")) +
-      "</h4><p>" +
-      esc(t("guild.questDesc", { name: unit.name || "", className: classNameOf(unit) })) +
-      "</p><div class='meta'>" +
-      t("guild.reward", { gold: g.gold, exp: g.exp }) +
-      (g.done ? "　" + t("guild.done") : "　" + t("guild.needFight")) +
-      "</div></div>" +
-      (g.done
-        ? ""
-        : '<button type="button" class="btn" data-act="guild-fight">' + t("ui.accept") + "</button>") +
-      "</div>" +
-      actions({ leave: t("ui.leave") });
+      rankTableHtml() +
+      actions({
+        "guild-switch": { label: t("guild.switch"), disabled: lockLeft > 0 },
+        leave: t("ui.leave")
+      });
     openModal(panel(t("guild.title"), body, "wide"));
     setView("guild");
   }
@@ -1545,7 +1927,7 @@
   function openGuildRules() {
     var body =
       '<div class="tabs">' +
-      '<button type="button" class="tab" data-act="guild">' + t("guild.tabJob") + '</button>' +
+      '<button type="button" class="tab" data-act="guild">' + t("guild.tabBoard") + '</button>' +
       '<button type="button" class="tab active" data-act="guild-rules">' + t("guild.tabRules") + '</button>' +
       '<button type="button" class="tab" data-act="stats">' + t("guild.tabStats") + '</button></div>' +
       "<dl class='rules'>" +
@@ -1581,14 +1963,18 @@
       if (it.id === id) q = it;
     });
     if (!q || q.done) return;
+    if (!state.guildId) {
+      toast(t("guild.needJoin"));
+      return;
+    }
     q.done = true;
-    addGold(q.gold);
-    var lv = gainExp(q.exp);
+    addGuildPoints(q.points);
+    var lv = [];
     var html =
       "<p>" +
-      t("quest.doneBody", { name: q.name }) +
+      t("quest.doneBody", { name: questName(q.id) }) +
       "</p><p>" +
-      t("quest.doneReward", { gold: q.gold, exp: q.exp }) +
+      t("quest.doneReward", { points: q.points }) +
       "</p>" +
       actions({ "after-action": t("ui.ok") });
     pendingLevelUps = lv;
@@ -1663,8 +2049,7 @@
     var loreIdx = (state.day - 1) % 4;
     var lore = t("statue.lore" + loreIdx);
     var rate = goldRate();
-    var dayGold = rate * D.TICKS_PER_DAY;
-    var full = state.gold >= D.GOLD_CAP;
+    var dayGold = goldPerDay();
     var healed = false;
     var i, u;
     if (fromEnter) {
@@ -1690,9 +2075,9 @@
           "</td><td>Lv." +
           u.level +
           "</td><td class='growth'>" +
-          u.level +
+          formatTick(unitTick(u)) +
           " / 10s</td><td>" +
-          (u.level * D.TICKS_PER_DAY) +
+          formatGold(unitDaily(u)) +
           "</td></tr>"
         );
       })
@@ -1716,12 +2101,11 @@
       rows +
       "</tbody></table>" +
       "<p>" +
-      t("statue.total", { rate: rate, day: dayGold }) +
+      t("statue.total", { rate: formatTick(rate), day: formatGold(dayGold) }) +
       "</p>" +
       "<p>" +
-      t("statue.gold", { gold: state.gold, cap: D.GOLD_CAP }) +
+      t("statue.gold", { gold: formatGold(state.gold) }) +
       "</p>" +
-      (full ? "<p class='warn-text'>" + t("statue.full") + "</p>" : "") +
       actions({ leave: t("ui.leave") });
     openModal(panel(t("statue.title"), body, "wide"));
     setView("statue");
@@ -1729,13 +2113,11 @@
 
   function openBank() {
     var rate = goldRate();
-    var dayGold = rate * D.TICKS_PER_DAY;
-    var full = state.gold >= D.GOLD_CAP;
+    var dayGold = goldPerDay();
     var body =
       "<p class='lead'>" + t("bank.lead") + "</p>" +
-      "<p>" + t("bank.gold", { gold: state.gold, cap: D.GOLD_CAP }) + "</p>" +
-      "<p>" + t("bank.income", { rate: rate, day: dayGold }) + "</p>" +
-      (full ? "<p class='warn-text'>" + t("statue.full") + "</p>" : "") +
+      "<p>" + t("bank.gold", { gold: formatGold(state.gold) }) + "</p>" +
+      "<p>" + t("bank.income", { rate: formatTick(rate), day: formatGold(dayGold) }) + "</p>" +
       actions({ leave: t("ui.leave") });
     openModal(panel(t("bank.title"), body, "narrow"));
     setView("bank");
@@ -1745,7 +2127,7 @@
     var p = active();
     var cls = D.CLASSES[p.classId];
     var atCap = p.level >= D.LEVEL_CAP;
-    var cost = D.trainCost(p.level);
+    var cost = trainFee(p.level);
     var poor = !atCap && state.gold < cost;
     var rows = STAT_KEYS.map(function (k) {
       var val = k === "hp" ? p.maxHp : p[k];
@@ -1764,7 +2146,9 @@
     else if (poor) note = "<p class='warn-text'>" + t("train.poor") + "</p>";
     var costLine = atCap
       ? "<p>" + t("train.atCap", { cap: D.LEVEL_CAP }) + "</p>"
-      : "<p>" + t("train.nextCost", { lv: p.level, cost: cost }) + "</p>";
+      : "<p>" + t("train.nextCostBonus", { lv: p.level, cost: formatGold(cost) }) + "</p>" +
+        "<p>" + t("train.payback", { days: formatGold(paybackDays(p.level)) }) + "</p>" +
+        "<p class='muted'>" + t("train.goldBonus") + "</p>";
     var body =
       "<p class='lead'>" + t("train.lead") + "</p>" +
       "<p>" +
@@ -1775,6 +2159,7 @@
       p.level +
       (atCap ? t("ui.cap") : "") +
       "</p>" +
+      (classBonusLine(p.classId) ? "<p>" + classBonusLine(p.classId) + "</p>" : "") +
       "<table class='stat-table'><thead><tr><th></th><th>" +
       t("train.current") +
       "</th><th>" +
@@ -1783,7 +2168,7 @@
       rows +
       "</tbody></table>" +
       costLine +
-      "<p>" + t("train.goldOnHand", { gold: state.gold }) + "</p>" +
+      "<p>" + t("train.goldOnHand", { gold: formatGold(state.gold) }) + "</p>" +
       "<p class='muted'>" + t("train.note") + "</p>" +
       note +
       actions({
@@ -1860,39 +2245,10 @@
     };
   }
 
-  function openArena() {
+  function openArena(skipPrize) {
+    settleArenaSeason();
+    if (!skipPrize && showArenaPrizeNote()) return;
     var p = active();
-    var items = state.arenaRoster
-      .map(function (slot, idx) {
-        var u = slot.unit;
-        var w = D.WEAPONS[u.weaponId];
-        return (
-          '<div class="list-item' +
-          (slot.fought ? " done" : "") +
-          '"><div class="info"><h4>' +
-          esc(displayName(u)) +
-          "　" +
-          classNameOf(u) +
-          " Lv." +
-          u.level +
-          "</h4><p>" +
-          t("arena.weapon", { name: w ? weaponName(w) : "?" }) +
-          "　" +
-          t("arena.wagerLine", { gold: slot.wager, exp: slot.exp }) +
-          "</p>" +
-          (slot.fought ? "<div class='meta'>" + t("arena.fought") + "</div>" : "") +
-          "</div>" +
-          (slot.fought
-            ? ""
-            : '<button type="button" class="btn" data-act="arena" data-id="' +
-              idx +
-              '"' +
-              (state.gold < slot.wager ? " disabled" : "") +
-              ">" + t("ui.engage") + "</button>") +
-          "</div>"
-        );
-      })
-      .join("");
     var body =
       "<p class='lead'>" + t("arena.leadFull") + "</p>" +
       "<p>" +
@@ -1901,12 +2257,17 @@
       classNameOf(p) +
       "　Lv." +
       p.level +
+      "　HP " + p.hp + "/" + p.maxHp +
+      "</p>" +
+      "<p>" + t("arena.points", { points: currentPersonalPoints() }) +
+      (state.guildId
+        ? "　" + t("guild.current", { name: guildName(state.guildId) }) + "　" +
+          t("guild.points", { points: currentGuildPoints() })
+        : "　" + t("arena.needGuild")) +
       "</p>" +
       "<p class='muted'>" + t("arena.noteFull") + "</p>" +
-      '<div class="list">' +
-      items +
-      "</div>" +
-      actions({ leave: t("ui.leave") });
+      rankTableHtml() +
+      actions({ "arena-fight": t("arena.fightNow"), leave: t("ui.leave") });
     openModal(panel(t("arena.title"), body, "wide"));
     setView("arena");
   }
@@ -1980,6 +2341,7 @@
       p.level +
       (p.level >= D.LEVEL_CAP ? t("ui.cap") : "　" + t("stats.exp") + " " + p.exp + "/" + D.EXP_PER_LEVEL) +
       "</p>" +
+      (classBonusLine(p.classId) ? "<p>" + classBonusLine(p.classId) + "</p>" : "") +
       "<table class='stat-table'><thead><tr><th></th><th>" +
       t("train.current") +
       "</th><th>" +
@@ -2007,7 +2369,7 @@
       p.maxHp +
       "</span>" +
       "<span class='k'>" + t("stats.partyGold") + "</span><span>" +
-      state.gold +
+      formatGold(state.gold) +
       "</span></div>" +
       actions({ leave: t("ui.close") });
     openModal(panel(t("stats.title"), body));
@@ -2110,41 +2472,146 @@
     if (ctx.fee) addGold(-ctx.fee);
     ctx.preHp = p.hp;
     ctx.preMax = p.maxHp;
-    var result = C.resolveDuel(ctx.atk, ctx.def, rng(), { maxRounds: ctx.kind === "dungeon" ? 1 : 20 });
+    var result = C.resolveDuel(ctx.atk, ctx.def, rng(), {
+      maxRounds: ctx.kind === "dungeon" ? 1 : 20,
+      untilDown: ctx.kind === "arena" || ctx.kind === "guild"
+    });
     ctx.result = result;
     renderHud();
     playBattle(ctx, result);
   }
 
   function mountBattle(ctx) {
-    var field = ctx.kind === "arena" ? "sand" : "grass";
-    var sky = state && state.period === 2 ? "dusk" : state && state.period === 1 ? "day" : "morn";
+    var field = ctx.kind === "arena" ? "sand" : ctx.kind === "dungeon" ? "cave" : "grass";
+    var fc = C.forecast(ctx.atk, ctx.def);
     var el = $("#battle");
     el.classList.add("fighting");
     el.innerHTML =
-      '<div class="fe-battle sky-' +
-      sky +
-      " field-" +
+      '<div class="fe-battle gba-battle field-' +
       field +
-      '"><div class="fe-sky"></div><div class="fe-horizon"></div><div class="fe-ground"></div>' +
-      '<div class="fe-flash" id="b-flash"></div><div class="fe-crit-veil" id="b-crit-veil"></div>' +
-      '<div class="fe-slash" id="b-slash"></div><div class="fe-banner" id="b-banner">' + t("crit.splash") + "</div>" +
+      '"><div class="fe-stage" id="b-stage">' +
+      '<canvas class="fe-mapbg" id="b-mapbg"></canvas>' +
+      '<div class="fe-platform-wrap"><div class="fe-platform-pad"></div>' +
       fighterBox("a", ctx.atk, false, "r") +
       fighterBox("b", ctx.def, true, "l") +
-      '<div class="fe-dock">' +
-      hpWin("a", ctx.atk, ctx.atk.hp, false) +
-      hpWin("b", ctx.def, ctx.def.hp, true) +
-      "</div></div>";
+      "</div>" +
+      '<div class="fe-slash" id="b-slash"></div><div class="fe-slash" id="b-slash2"></div><div class="fe-slash" id="b-slash3"></div>' +
+      '<div class="fe-spark" id="b-spark"></div><div class="fe-arrow" id="b-arrow"></div>' +
+      '<div class="fe-thrust" id="b-thrust"></div><div class="fe-shock" id="b-shock"></div>' +
+      "</div>" +
+      '<div class="fe-flash" id="b-flash"></div><div class="fe-crit-veil" id="b-crit-veil"></div>' +
+      '<div class="fe-banner" id="b-banner">' + t("crit.splash") + "</div>" +
+      '<div class="ba-name left" id="ba-name-a">' + esc(displayName(ctx.atk)) + "</div>" +
+      '<div class="ba-name right" id="ba-name-b">' + esc(displayName(ctx.def)) + "</div>" +
+      '<div class="ba-dock">' +
+      baStats("a", fc.a, false) +
+      '<div class="ba-weapons">' +
+      baWeapon("a", ctx.atk, false) +
+      '<div class="div"></div>' +
+      baWeapon("b", ctx.def, true) +
+      "</div>" +
+      baStats("b", fc.b, true) +
+      '<div class="ba-hpbar">' +
+      baHp("a", ctx.atk, ctx.atk.hp, false) +
+      baHp("b", ctx.def, ctx.def.hp, true) +
+      "</div></div></div>";
     el.classList.remove("hidden");
+    paintBattleMap(ctx.kind);
+    requestAnimationFrame(function () { paintBattleMap(ctx.kind); });
+  }
+
+  function battleFocusTile(kind) {
+    if (kind === "arena") return [19, 8];
+    if (kind === "dungeon") return [13, 13];
+    if (kind === "training") return [22, 12];
+    return [13, 10];
+  }
+
+  function paintBattleMap(kind) {
+    var dest = $("#b-mapbg");
+    if (!dest) return;
+    var host = dest.parentElement || dest;
+    var w = Math.max(320, host.clientWidth || 640);
+    var h = Math.max(180, host.clientHeight || 360);
+    dest.width = w;
+    dest.height = h;
+    var g = dest.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    var src = $("#town-map");
+    if (src && src.width > 8) {
+      var tm = typeof TownMap !== "undefined" ? TownMap : null;
+      var px = tm && tm.TILE && tm.SCALE ? tm.TILE * tm.SCALE : 48;
+      var f = battleFocusTile(kind);
+      var zoom = 1.7;
+      var sw = src.width / zoom;
+      var sh = src.height / zoom;
+      var sx = Math.max(0, Math.min(src.width - sw, f[0] * px - sw / 2));
+      var sy = Math.max(0, Math.min(src.height - sh, f[1] * px - sh / 2));
+      g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+      g.fillStyle = kind === "dungeon" ? "rgba(8, 6, 10, 0.38)" : "rgba(12, 20, 8, 0.12)";
+      g.fillRect(0, 0, w, h);
+    } else {
+      g.fillStyle = kind === "dungeon" ? "#2a2428" : kind === "arena" ? "#c4a868" : "#4a8a3a";
+      g.fillRect(0, 0, w, h);
+    }
+  }
+
+  function weaponIconClass(unit) {
+    var kind = weaponKind(unit);
+    if (kind === "axe" || kind === "lance" || kind === "bow" || kind === "sword") return kind;
+    if (unit && unit.weapon && unit.weapon.type === "train") return "train";
+    return "sword";
+  }
+
+  function baWeapon(id, unit, right) {
+    return (
+      '<div class="ba-wpn ' +
+      (right ? "right" : "left") +
+      '"><span class="wpn-ico ' +
+      weaponIconClass(unit) +
+      '"></span><span class="nm" id="ba-wpn-' +
+      id +
+      '">' +
+      esc(weaponName(unit.weapon || unit.weaponId)) +
+      "</span></div>"
+    );
+  }
+
+  function baStats(id, side, right) {
+    var dmg = String(side.damage);
+    if (side.followUp) dmg += "<span class='x2'>×2</span>";
+    return (
+      '<div class="ba-stats ' +
+      (right ? "right" : "left") +
+      '"><div class="row" id="ba-hit-' +
+      id +
+      '"><span class="lab">' +
+      t("ba.hit") +
+      '</span><span class="val">' +
+      side.hit +
+      '</span></div><div class="row" id="ba-dmg-' +
+      id +
+      '"><span class="lab">' +
+      t("ba.dmg") +
+      '</span><span class="val">' +
+      dmg +
+      '</span></div><div class="row" id="ba-crt-' +
+      id +
+      '"><span class="lab">' +
+      t("ba.crt") +
+      '</span><span class="val">' +
+      side.crit +
+      "</span></div></div>"
+    );
   }
 
   function fighterBox(id, unit, foe, facing) {
     return (
       '<div class="fe-fighter ' +
-      (id === "a" ? "left" : "right") +
-      '" id="b-f-' +
+      (id === "a" ? "left ally" : "right foe") +
+      ' idle" id="b-f-' +
       id +
-      '"><div class="fe-platform"></div><img class="stand-art" src="' +
+      '"><img class="stand-art" src="' +
       standSrc(unit, foe, facing) +
       '" alt="" draggable="false" /><div class="fe-pop" id="b-pop-' +
       id +
@@ -2152,27 +2619,22 @@
     );
   }
 
-  function hpWin(id, unit, hp, right) {
+  function baHp(id, unit, hp, right) {
+    var pct = Math.round((hp / Math.max(1, unit.maxHp)) * 100);
     return (
-      '<div class="hp-win' +
-      (right ? " right" : "") +
-      '" id="hp-win-' +
-      id +
-      '"><div class="who"><span class="nm">' +
-      esc(displayName(unit)) +
-      '</span><span class="cl">' +
-      esc(classNameOf(unit)) +
-      '</span></div><div class="hp-row"><span class="lbl">HP</span><span class="hp-track"><span class="hp-fill" id="hp-fill-' +
-      id +
-      '" style="width:' +
-      Math.round((hp / Math.max(1, unit.maxHp)) * 100) +
-      '%"></span></span><span id="hp-num-' +
+      '<div class="ba-hp ' +
+      (right ? "right" : "left") +
+      '"><span class="num" id="hp-num-' +
       id +
       '">' +
       hp +
-      "/" +
-      unit.maxHp +
-      "</span></div></div>"
+      '</span><div class="ba-pips"><span class="fill' +
+      (pct <= 30 ? " low" : "") +
+      '" id="hp-fill-' +
+      id +
+      '" style="width:' +
+      pct +
+      '%"></span></div></div>'
     );
   }
 
@@ -2184,7 +2646,7 @@
       fill.style.width = pct + "%";
       fill.classList.toggle("low", pct <= 30);
     }
-    if (num) num.textContent = hp + "/" + max;
+    if (num) num.textContent = String(hp);
   }
 
   function showPop(id, text, kind) {
@@ -2205,7 +2667,7 @@
   }
 
   function playCritEffect(atkEl, defEl, defId) {
-    var stage = $("#battle .fe-battle");
+    var stage = $("#b-stage") || $("#battle .fe-battle");
     if (stage) {
       stage.classList.remove("crit-shake");
       void stage.offsetWidth;
@@ -2247,6 +2709,87 @@
     later(step, 550);
   }
 
+  function playHitFx(atkId, defId, kind, ev) {
+    var spark = $("#b-spark");
+    if (spark && ev.result !== "miss") {
+      spark.className = "fe-spark side-" + defId + (ev.crit ? " crit" : "");
+      void spark.offsetWidth;
+      spark.classList.add("show");
+    }
+    if (kind === "bow") {
+      var arrow = $("#b-arrow");
+      if (arrow) {
+        arrow.className = "fe-arrow from-" + atkId;
+        void arrow.offsetWidth;
+        arrow.classList.add("show");
+      }
+    } else if (kind === "lance") {
+      var thrust = $("#b-thrust");
+      if (thrust) {
+        thrust.className = "fe-thrust from-" + atkId;
+        void thrust.offsetWidth;
+        thrust.classList.add("show");
+      }
+    } else {
+      var slash = $("#b-slash");
+      if (slash && ev.result !== "miss" && !ev.crit) {
+        slash.className = "fe-slash side-" + defId + " hit";
+        void slash.offsetWidth;
+        slash.classList.add("show");
+      }
+    }
+  }
+
+  function setActing(el, on) {
+    if (!el) return;
+    el.classList.toggle("acting", !!on);
+    if (!on && !el.classList.contains("down")) el.classList.add("idle");
+    else el.classList.remove("idle");
+  }
+
+  function clearStrikeClasses(el) {
+    if (!el) return;
+    el.className = el.className
+      .split(" ")
+      .filter(function (c) {
+        return (
+          c &&
+          c !== "lunge" &&
+          c !== "lunge-bow" &&
+          c !== "hurt" &&
+          c !== "dodge" &&
+          c !== "crit-hurt" &&
+          c !== "crit-windup" &&
+          c !== "crit-dash" &&
+          c !== "crit-flourish" &&
+          c !== "crit-recover" &&
+          c !== "crit-fire" &&
+          c !== "crit-sword" &&
+          c !== "crit-axe" &&
+          c !== "crit-lance" &&
+          c !== "crit-bow" &&
+          c !== "acting"
+        );
+      })
+      .join(" ");
+  }
+
+  function flashSlash(id, defId, extra) {
+    var el = $(id);
+    if (!el) return;
+    el.className = "fe-slash side-" + defId + (extra ? " " + extra : "");
+    void el.offsetWidth;
+    el.classList.add("show");
+  }
+
+  function flashShock(defId) {
+    var el = $("#b-shock");
+    if (!el) return;
+    el.className = "fe-shock side-" + defId;
+    void el.offsetWidth;
+    el.classList.add("show");
+  }
+
   function playStrike(ctx, ev, done) {
     var atkId = ev.side === "a" ? "a" : "b";
     var defId = ev.side === "a" ? "b" : "a";
@@ -2257,19 +2800,27 @@
       done();
       return;
     }
-    atkEl.classList.remove("lunge");
+    var atkUnit = ev.side === "a" ? ctx.atk : ctx.def;
+    var atkFacing = ev.side === "a" ? "r" : "l";
+    var atkFoe = ev.side !== "a";
+    var atkImg = atkEl.querySelector(".stand-art");
+    var kind = weaponKind(atkUnit);
+    if (ev.crit) {
+      playCritStrike(ctx, ev, atkId, defId, atkEl, defEl, atkUnit, atkFacing, atkFoe, atkImg, kind, defMax, done);
+      return;
+    }
+    setActing(atkEl, true);
+    atkEl.classList.remove("lunge", "lunge-bow");
     void atkEl.offsetWidth;
-    atkEl.classList.add("lunge");
+    atkEl.classList.add(kind === "bow" ? "lunge-bow" : "lunge");
+    if (atkImg) atkImg.src = standSrc(atkUnit, atkFoe, atkFacing, "atk");
     later(function () {
-      defEl.classList.remove("hurt");
+      defEl.classList.remove("hurt", "dodge");
       void defEl.offsetWidth;
+      playHitFx(atkId, defId, kind, ev);
       if (ev.result === "miss") {
         showPop(defId, t("battle.miss"), "miss");
-      } else if (ev.crit) {
-        playCritEffect(atkEl, defEl, defId);
-        showPop(defId, String(ev.damage), "crit");
-        defEl.classList.add("hurt");
-        defEl.classList.add("crit-hurt");
+        defEl.classList.add("dodge");
       } else {
         showPop(defId, String(ev.damage), "hit");
         defEl.classList.add("hurt");
@@ -2277,14 +2828,122 @@
       setBattleHp(defId, ev.defenderHp, defMax);
       if (ev.defenderHp <= 0) defEl.classList.add("down");
       later(function () {
-        atkEl.classList.remove("lunge");
+        clearStrikeClasses(atkEl);
         defEl.classList.remove("hurt");
-        defEl.classList.remove("crit-hurt");
-        var stage = $("#battle .fe-battle");
-        if (stage) stage.classList.remove("crit-shake");
+        defEl.classList.remove("dodge");
+        if (atkImg) atkImg.src = standSrc(atkUnit, atkFoe, atkFacing);
+        setActing(atkEl, false);
         done();
-      }, ev.crit ? 780 : 380);
-    }, 270);
+      }, 420);
+    }, kind === "bow" ? 200 : 270);
+  }
+
+  function playCritStrike(ctx, ev, atkId, defId, atkEl, defEl, atkUnit, atkFacing, atkFoe, atkImg, kind, defMax, done) {
+    var battle = $("#battle .fe-battle");
+    var styleClass = kind === "bow" ? "crit-bow" : kind === "lance" ? "crit-lance" : kind === "axe" ? "crit-axe" : "crit-sword";
+    setActing(atkEl, true);
+    if (battle) battle.classList.add("crit-mode");
+    atkEl.classList.add(styleClass, "crit-windup");
+    if (kind === "bow" && atkImg) atkImg.src = standSrc(atkUnit, atkFoe, atkFacing, "atk");
+
+    function landHit() {
+      defEl.classList.remove("hurt", "dodge", "crit-hurt");
+      void defEl.offsetWidth;
+      playCritEffect(atkEl, defEl, defId);
+      if (kind === "axe" || kind === "lance") flashShock(defId);
+      showPop(defId, String(ev.damage), "crit");
+      defEl.classList.add("hurt");
+      defEl.classList.add("crit-hurt");
+      setBattleHp(defId, ev.defenderHp, defMax);
+      if (ev.defenderHp <= 0) defEl.classList.add("down");
+    }
+
+    function finish(delay) {
+      later(function () {
+        atkEl.classList.remove("crit-dash", "crit-flourish", "crit-fire");
+        atkEl.classList.add("crit-recover");
+        if (atkImg) atkImg.src = standSrc(atkUnit, atkFoe, atkFacing);
+        later(function () {
+          clearStrikeClasses(atkEl);
+          defEl.classList.remove("hurt");
+          defEl.classList.remove("crit-hurt");
+          if (battle) battle.classList.remove("crit-mode");
+          var stage = $("#b-stage");
+          if (stage) stage.classList.remove("crit-shake");
+          setActing(atkEl, false);
+          done();
+        }, 280);
+      }, delay);
+    }
+
+    if (kind === "bow") {
+      later(function () {
+        atkEl.classList.remove("crit-windup");
+        atkEl.classList.add("crit-fire");
+        var arrow = $("#b-arrow");
+        if (arrow) {
+          arrow.className = "fe-arrow crit from-" + atkId;
+          void arrow.offsetWidth;
+          arrow.classList.add("show");
+        }
+        later(function () {
+          var spark = $("#b-spark");
+          if (spark) {
+            spark.className = "fe-spark side-" + defId + " crit";
+            void spark.offsetWidth;
+            spark.classList.add("show");
+          }
+          landHit();
+        }, 280);
+      }, 480);
+      finish(1100);
+      return;
+    }
+
+    later(function () {
+      if (atkImg) atkImg.src = standSrc(atkUnit, atkFoe, atkFacing, "atk");
+      atkEl.classList.remove("crit-windup");
+      atkEl.classList.add(kind === "sword" || kind === "axe" || kind === "lance" ? "crit-flourish" : "crit-dash");
+      if (kind === "sword") {
+        later(function () { flashSlash("#b-slash2", defId, "slash-2"); }, 200);
+        later(function () {
+          flashSlash("#b-slash3", defId, "slash-3");
+          var spark = $("#b-spark");
+          if (spark) {
+            spark.className = "fe-spark side-" + defId + " crit";
+            void spark.offsetWidth;
+            spark.classList.add("show");
+          }
+        }, 340);
+        later(landHit, 480);
+      } else if (kind === "axe") {
+        later(function () {
+          flashSlash("#b-slash2", defId, "slash-3");
+          flashShock(defId);
+        }, 300);
+        later(landHit, 420);
+      } else {
+        later(function () {
+          var thrust = $("#b-thrust");
+          if (thrust) {
+            thrust.className = "fe-thrust crit from-" + atkId;
+            void thrust.offsetWidth;
+            thrust.classList.add("show");
+          }
+        }, 160);
+        later(function () {
+          var thrust = $("#b-thrust");
+          if (thrust) {
+            thrust.className = "fe-thrust crit from-" + atkId;
+            void thrust.offsetWidth;
+            thrust.classList.add("show");
+          }
+          flashShock(defId);
+        }, 300);
+        later(landHit, 400);
+      }
+    }, 360);
+    finish(kind === "sword" ? 1200 : 1100);
   }
 
   function showBattleResult(ctx, result) {
@@ -2300,6 +2959,7 @@
     var goldGain = 0;
     var note = "";
 
+    var rewardLine = t("battle.noReward");
     if (ctx.kind === "train") {
       var hpGain = p.maxHp - ctx.preMax;
       p.hp = Math.min(p.maxHp, ctx.preHp + hpGain);
@@ -2309,33 +2969,37 @@
         : lost
         ? t("train.lose")
         : t("train.draw");
+      rewardLine = t("battle.exp", { exp: expGain });
     } else if (ctx.kind === "arena") {
+      if (p.hp < 0) p.hp = 0;
       if (win) {
-        goldGain = ctx.fee * 2;
-        addGold(goldGain);
-        expGain = ctx.exp;
+        addPersonalPoints(D.ARENA_WIN_POINTS);
         note = t("arena.win");
+        rewardLine = t("arena.pointsGain", {
+          n: D.ARENA_WIN_POINTS,
+          personal: currentPersonalPoints(),
+          guild: currentGuildPoints()
+        });
       } else {
-        expGain = Math.round(ctx.exp * 0.5);
-        note = lost
-          ? t("arena.lose")
-          : t("arena.draw");
+        if (p.hp < 1) p.hp = 0;
+        note = t("arena.lose");
+        rewardLine = "";
       }
-      if (ctx.slot) ctx.slot.fought = true;
     } else if (ctx.kind === "guild") {
       if (win) {
-        goldGain = ctx.gold;
-        addGold(goldGain);
-        expGain = ctx.exp;
+        var pts = (ctx.points != null ? ctx.points : D.GUILD_HUNT_POINTS);
+        addGuildPoints(pts);
         state.guildQuest.done = true;
-        note = t("guild.win");
+        note = t("guild.win", { points: pts });
+        rewardLine = t("quest.doneReward", { points: pts });
       } else {
-        expGain = Math.round(ctx.exp * 0.5);
-        note = lost ? t("guild.lose") : t("guild.draw");
+        if (p.hp < 1) p.hp = 0;
+        note = t("guild.lose");
+        rewardLine = "";
       }
     }
 
-    var lv = gainExp(expGain);
+    var lv = ctx.kind === "train" ? gainExp(expGain) : [];
     pendingLevelUps = lv;
     renderHud();
     save();
@@ -2344,12 +3008,12 @@
     layer.className = "result-layer";
     layer.innerHTML =
       '<div class="result-win fe-win"><h3>' +
-      (win ? t("battle.win") : lost ? t("battle.lose") : t("battle.draw")) +
+      (win ? t("battle.win") : t("battle.lose")) +
       "</h3><p>" +
       note +
-      "</p><p>" +
-      (goldGain > 0 ? t("battle.expGold", { exp: expGain, gold: goldGain }) : t("battle.exp", { exp: expGain })) +
-      '</p><div class="actions"><button type="button" class="btn btn-gold" data-act="battle-done">' +
+      "</p>" +
+      (rewardLine ? "<p>" + rewardLine + "</p>" : "") +
+      '<div class="actions"><button type="button" class="btn btn-gold" data-act="battle-done">' +
       t("ui.confirm") +
       "</button></div></div>";
     var stage = $("#battle .fe-battle");
@@ -2368,11 +3032,14 @@
       return;
     }
     var goOn = function () {
+      if (ctx.kind === "arena" || ctx.kind === "guild") {
+        advancePeriod();
+        if (ctx.kind === "arena") openArena();
+        else openGuild();
+        return;
+      }
       if (ctx.kind !== "train" && ctx.lost) {
-        faint(
-          ctx.kind === "arena" ? t("faint.arena") : t("faint.battle"),
-          ctx.kind !== "arena"
-        );
+        faint(t("faint.battle"), true);
         return;
       }
       advancePeriod();
@@ -2455,23 +3122,50 @@
       openGuildRules();
       return;
     }
+    if (act === "guild-switch") {
+      if (guildSwitchLeft()) {
+        toast(t("guild.lockToast", { time: formatSeasonTime(guildSwitchLeft()) }));
+        return;
+      }
+      openGuildJoin();
+      return;
+    }
+    if (act === "join-guild") {
+      if (!id || !D.GUILDS[id] || state.guildId === id) return;
+      if (state.guildId && guildSwitchLeft()) {
+        toast(t("guild.lockToast", { time: formatSeasonTime(guildSwitchLeft()) }));
+        return;
+      }
+      state.guildId = id;
+      state.guildJoinedAt = Date.now();
+      if (!state.guildPoints) state.guildPoints = {};
+      if (state.guildPoints[id] == null) state.guildPoints[id] = 0;
+      save();
+      renderHud();
+      openGuild();
+      return;
+    }
     if (act === "guild-fight") {
       p = active();
+      if (!state.guildId) {
+        toast(t("guild.needJoin"));
+        return;
+      }
       if (state.guildQuest.done) return;
       if (p.hp <= 0) {
-        toast(t("toast.cantStand"));
+        toast(t("toast.cantStand") || t("arena.noHp", { name: displayName(p) }));
         return;
       }
       closeModal();
       showForecast({
         kind: "guild",
-        title: t("guild.questName"),
-        titleShort: t("guild.titleShort"),
+        title: t("guild.huntName"),
+        titleShort: t("guild.title"),
         atk: playerFighter(),
         def: fighterFrom(state.guildQuest.unit, false),
         fee: 0,
-        gold: state.guildQuest.gold,
-        exp: state.guildQuest.exp
+        points: state.guildQuest.points || D.GUILD_HUNT_POINTS,
+        exp: 0
       });
       return;
     }
@@ -2508,7 +3202,7 @@
         toast(t("train.capToast"));
         return;
       }
-      var fee = D.trainCost(p.level);
+      var fee = trainFee(p.level);
       if (state.gold < fee) {
         toast(t("train.poorToast"));
         return;
@@ -2523,27 +3217,35 @@
       });
       return;
     }
-    if (act === "arena") {
-      var slot = state.arenaRoster[Number(id)];
-      if (!slot || slot.fought) return;
-      if (state.gold < slot.wager) {
-        toast(t("arena.noGold"));
+    if (act === "arena-after-prize") {
+      openArena(true);
+      return;
+    }
+    if (act === "arena" || act === "arena-fight") {
+      p = active();
+      if (act === "arena-fight") {
+        if (p.hp <= 0) {
+          toast(t("arena.noHp", { name: displayName(p) }));
+          return;
+        }
+        var foe = makeArenaFoe();
+        closeModal();
+        pendingBattle = {
+          kind: "arena",
+          title: t("arena.titleOf", { name: displayName(foe) }),
+          atk: playerFighter(),
+          def: fighterFrom(foe, false),
+          fee: 0,
+          exp: 0
+        };
+        startPendingFight();
         return;
       }
-      if (active().hp <= 0) {
-        toast(t("arena.noHp", { name: displayName(active()) }));
+      if (p.hp <= 0) {
+        toast(t("arena.noHp", { name: displayName(p) }));
         return;
       }
-      closeModal();
-      showForecast({
-        kind: "arena",
-        title: t("arena.titleOf", { name: displayName(slot.unit) }),
-        atk: playerFighter(),
-        def: fighterFrom(slot.unit, false),
-        fee: slot.wager,
-        exp: slot.exp,
-        slot: slot
-      });
+      openArena();
       return;
     }
     if (act === "fight") {
@@ -2689,11 +3391,15 @@
 
   function enterTown(fresh) {
     showScreen("screen-town");
+    settleArenaSeason();
     renderHud();
     mountTownMap();
     startIncomeTimer();
     catchUpIncome();
     renderHud();
+    if (state.arenaPrizeNote && !(fresh && !state.introShown)) {
+      showArenaPrizeNote();
+    }
     if (fresh && !state.introShown) {
       state.introShown = true;
       save();
@@ -2808,7 +3514,7 @@
     },
     setGold: function (n) {
       if (!state) return null;
-      state.gold = Math.max(0, Math.min(D.GOLD_CAP, n));
+      state.gold = Math.max(0, n);
       renderHud();
       save();
       return state.gold;

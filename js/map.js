@@ -351,9 +351,11 @@
       "cursor0", "cursor1", "unit0", "unit1",
       "cave", "town_gate"
     ];
-    var jobs = [loadImage("assets/map/tileset.png").then(function (im) { tileset = im; })];
+    var jobs = [loadImage("assets/map/tileset.webp").then(function (im) { tileset = im; })];
+    var keepPng = { cursor0: 1, cursor1: 1, unit0: 1, unit1: 1, dummy: 1 };
     names.forEach(function (n) {
-      jobs.push(loadImage("assets/map/" + n + ".png").then(function (im) { imgs[n] = im; }));
+      var ext = keepPng[n] ? ".png" : ".webp";
+      jobs.push(loadImage("assets/map/" + n + ext).then(function (im) { imgs[n] = im; }));
     });
     return Promise.all(jobs);
   }
@@ -582,9 +584,10 @@
     else if (type === "water2" && !anim.water) type = "water";
     var idx = TILE_INDEX[type];
     if (idx === undefined) idx = 0;
-    var sx = (idx % SHEET_COLS) * TILE;
-    var sy = Math.floor(idx / SHEET_COLS) * TILE;
-    ctx.drawImage(tileset, sx, sy, TILE, TILE, x * TILE * SCALE, y * TILE * SCALE, TILE * SCALE, TILE * SCALE);
+    var ts = tileset && tileset.width ? Math.floor(tileset.width / SHEET_COLS) : TILE;
+    var sx = (idx % SHEET_COLS) * ts;
+    var sy = Math.floor(idx / SHEET_COLS) * ts;
+    ctx.drawImage(tileset, sx, sy, ts, ts, x * TILE * SCALE, y * TILE * SCALE, TILE * SCALE, TILE * SCALE);
   }
 
   function drawSprite(img, px, py) {

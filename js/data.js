@@ -18,7 +18,8 @@
       weaponType: "sword",
       startingWeapon: "iron-sword",
       blurb: "以剑见长的游侠。技术与速度出众，容易打出必杀，却也身板单薄。",
-      bases: { hp: 18, str: 5, skill: 7, spd: 8, luck: 5, def: 3 },
+      bases: { hp: 18, str: 5, skill: 9, spd: 8, luck: 5, def: 3 },
+      bonus: { skill: 2 },
       growths: { hp: 70, str: 40, skill: 60, spd: 60, luck: 55, def: 20 }
     },
     cavalier: {
@@ -28,7 +29,8 @@
       weaponType: "lance",
       startingWeapon: "iron-lance",
       blurb: "使枪的军士。力量成长优秀，攻守较为均衡，速度则稍显平庸。",
-      bases: { hp: 20, str: 6, skill: 4, spd: 5, luck: 4, def: 5 },
+      bases: { hp: 20, str: 7, skill: 4, spd: 6, luck: 4, def: 5 },
+      bonus: { str: 1, spd: 1 },
       growths: { hp: 80, str: 60, skill: 35, spd: 40, luck: 35, def: 20 }
     },
     archer: {
@@ -38,7 +40,8 @@
       weaponType: "bow",
       startingWeapon: "iron-bow",
       blurb: "擅使长弓。命中稳定，能把技术转化为可靠的输出。",
-      bases: { hp: 18, str: 5, skill: 6, spd: 5, luck: 4, def: 4 },
+      bases: { hp: 18, str: 5, skill: 6, spd: 7, luck: 4, def: 4 },
+      bonus: { spd: 2 },
       growths: { hp: 75, str: 50, skill: 50, spd: 40, luck: 40, def: 20 }
     },
     thief: {
@@ -48,7 +51,8 @@
       weaponType: "sword",
       startingWeapon: "iron-sword",
       blurb: "身手敏捷的求生者。速度极高，容易追击，但力量与守备都不足。",
-      bases: { hp: 17, str: 3, skill: 5, spd: 9, luck: 6, def: 2 },
+      bases: { hp: 17, str: 3, skill: 6, spd: 10, luck: 6, def: 2 },
+      bonus: { skill: 1, spd: 1 },
       growths: { hp: 75, str: 30, skill: 40, spd: 70, luck: 50, def: 25 }
     },
     armor: {
@@ -58,7 +62,8 @@
       weaponType: "lance",
       startingWeapon: "iron-lance",
       blurb: "身披重甲的守御者。生命与守备成长惊人，却行动迟缓，难以追击。",
-      bases: { hp: 22, str: 6, skill: 3, spd: 2, luck: 2, def: 9 },
+      bases: { hp: 22, str: 6, skill: 3, spd: 2, luck: 2, def: 11 },
+      bonus: { def: 2 },
       growths: { hp: 90, str: 40, skill: 30, spd: 30, luck: 35, def: 55 }
     },
     fighter: {
@@ -68,7 +73,8 @@
       weaponType: "axe",
       startingWeapon: "iron-axe",
       blurb: "力大的斧手。力量与生命出众，技术稍逊，守备也并不厚实。",
-      bases: { hp: 20, str: 7, skill: 4, spd: 5, luck: 3, def: 4 },
+      bases: { hp: 20, str: 9, skill: 4, spd: 5, luck: 3, def: 4 },
+      bonus: { str: 2 },
       growths: { hp: 85, str: 55, skill: 35, spd: 40, luck: 30, def: 25 }
     }
   };
@@ -94,6 +100,8 @@
 
   /** 地下城胜利时随机掉落的铜武器（不在商店出售）。 */
   var COPPER_REWARDS = ["copper-sword", "copper-axe", "copper-lance", "copper-bow"];
+  /** 地下城首领每次进入时随机装备的铁级武器。 */
+  var IRON_WEAPONS = ["iron-sword", "iron-lance", "iron-axe", "iron-bow"];
 
   var WEAPON_ORDER = [
     "iron-sword", "steel-sword", "slim-sword",
@@ -112,17 +120,34 @@
   var PARTY_ORDER = ["sword", "archer", "armor", "cavalier", "thief", "fighter"];
 
   var QUEST_POOL = [
-    { id: "escort", name: "护送行商", desc: "一位行商要在薄暮前离开灰灯镇，需要有人沿路照看。路不算远，风却不小。", gold: 42, exp: 22 },
-    { id: "herbs", name: "采集药草", desc: "一位厨娘拜托你去墙外坡地采一把药草。小心别被荆棘刮破手。", gold: 28, exp: 16 },
-    { id: "patrol", name: "巡查城墙", desc: "守墙的老兵希望有人替他走一趟北墙，看看有没有裂口或新脚印。", gold: 36, exp: 20 },
-    { id: "lostkid", name: "寻找走失的孩子", desc: "广场边的妇人说孩子跟着一只花猫跑出了巷口，到傍晚还没回来。", gold: 30, exp: 18 },
-    { id: "rats", name: "清理仓库老鼠", desc: "商店后院的木箱里又闹鼠患，店主愿意出一点酬金请人收拾干净。", gold: 24, exp: 14 },
-    { id: "fence", name: "修缮训练场栅栏", desc: "训练场的木栅栏被撞松了好几根，需要帮手把钉子重新钉回去。", gold: 32, exp: 17 },
-    { id: "letter", name: "送信到城门", desc: "公会执事托你把一封信送到城门卫兵手上，路上别拆开看。", gold: 26, exp: 15 },
-    { id: "firewood", name: "劈柴备冬", desc: "天气渐冷，镇上需要更多木柴。斧头可以借用，力气得自己出。", gold: 34, exp: 18 },
-    { id: "well", name: "疏通水井", desc: "西巷的井口积了落叶，几户人家打不上干净的水。", gold: 30, exp: 16 },
-    { id: "watch", name: "夜市看摊", desc: "布商要去公会谈事，请人帮忙照看一阵摊位，别让人顺走布卷。", gold: 38, exp: 19 }
+    { id: "escort", points: 42 },
+    { id: "herbs", points: 28 },
+    { id: "patrol", points: 36 },
+    { id: "lostkid", points: 30 },
+    { id: "rats", points: 24 },
+    { id: "fence", points: 32 },
+    { id: "letter", points: 26 },
+    { id: "firewood", points: 34 },
+    { id: "well", points: 30 },
+    { id: "watch", points: 38 }
   ];
+
+  var GUILD_ORDER = ["lampward", "wasteland", "ironoath"];
+  var GUILDS = {
+    lampward: { id: "lampward" },
+    wasteland: { id: "wasteland" },
+    ironoath: { id: "ironoath" }
+  };
+
+  var ARENA_WIN_POINTS = 10;
+  var ARENA_SEASON_MS = 15 * 24 * 60 * 60 * 1000;
+  var GUILD_LOCK_MS = 24 * 60 * 60 * 1000;
+  /* Always on: training fees and gold production are both +5%. */
+  var GOLD_BONUS = 0.05;
+  var GUILD_GOLD_BONUS = 0.05;
+  var ARENA_PRIZES = [100000, 50000, 20000];
+  var ARENA_NPC_COUNT = 8;
+  var GUILD_HUNT_POINTS = 60;
 
   var ENEMY_NAMES = {
     sword: ["雷蒙德", "希尔达", "奥斯瓦", "艾琳"],
@@ -133,7 +158,7 @@
     fighter: ["加托", "贝恩", "卢卡", "朵拉"]
   };
 
-  /** 镇外地下城初级首领：使长枪的骑士。 */
+  /** 镇外地下城初级首领：骑士，每次进入随机装备一把铁级武器。 */
   var DUNGEON_BOSS = {
     id: "stone-gate-knight",
     name: "石门骑士 柯刚",
@@ -148,8 +173,8 @@
     luck: 7,
     def: 8,
     weaponId: "long-lance",
-    rewardGold: 800,
-    rewardExp: 40
+    rewardGold: 0,
+    rewardExp: 0
   };
 
   var STATUE_LORE = [
@@ -162,12 +187,41 @@
   var PERIODS = ["上午", "下午", "傍晚"];
 
   var INN_COST = 40;
-  var GOLD_CAP = 99999;
-  var START_GOLD = 99999;
+  /** No gold cap. Test builds start with a large purse. */
+  var GOLD_CAP = 0;
+  var START_GOLD = 999999;
   var LEVEL_CAP = 20;
   var EXP_PER_LEVEL = 100;
   var GOLD_TICK_MS = 10000;
-  var TICKS_PER_DAY = 100;
+  /** One income day is 24 real hours: 8,640 ticks of 10 seconds. */
+  var TICKS_PER_DAY = 8640;
+  var INCOME_SCALE = 2000;
+  var INCOME_OFFSET = 20;
+  var ECONOMY_REV = 2;
+
+  function money(n) {
+    var x = Math.round(Number(n) * 100) / 100;
+    if (x === 0) return 0;
+    return x;
+  }
+
+  /** 24h income at this level: 2000 × level / (level + 20). */
+  function dailyIncome(level) {
+    var lv = level;
+    if (lv < 1) lv = 1;
+    if (lv > LEVEL_CAP) lv = LEVEL_CAP;
+    lv = Math.floor(lv);
+    return money(INCOME_SCALE * lv / (lv + INCOME_OFFSET));
+  }
+
+  function tickIncome(level) {
+    return dailyIncome(level) / TICKS_PER_DAY;
+  }
+
+  /** Cost to train from this level to the next equals current daily income. */
+  function trainCost(level) {
+    return dailyIncome(level);
+  }
 
   function classList() {
     return CLASS_ORDER.map(function (id) { return CLASSES[id]; });
@@ -186,9 +240,20 @@
     TYPE_NAMES: TYPE_NAMES,
     ITEMS: ITEMS,
     QUEST_POOL: QUEST_POOL,
+    GUILDS: GUILDS,
+    GUILD_ORDER: GUILD_ORDER,
+    ARENA_WIN_POINTS: ARENA_WIN_POINTS,
+    ARENA_SEASON_MS: ARENA_SEASON_MS,
+    GUILD_LOCK_MS: GUILD_LOCK_MS,
+    GOLD_BONUS: GOLD_BONUS,
+    GUILD_GOLD_BONUS: GUILD_GOLD_BONUS,
+    ARENA_PRIZES: ARENA_PRIZES,
+    ARENA_NPC_COUNT: ARENA_NPC_COUNT,
+    GUILD_HUNT_POINTS: GUILD_HUNT_POINTS,
     ENEMY_NAMES: ENEMY_NAMES,
     DUNGEON_BOSS: DUNGEON_BOSS,
     COPPER_REWARDS: COPPER_REWARDS,
+    IRON_WEAPONS: IRON_WEAPONS,
     STATUE_LORE: STATUE_LORE,
     PERIODS: PERIODS,
     PARTY_ORDER: PARTY_ORDER,
@@ -197,7 +262,13 @@
     START_GOLD: START_GOLD,
     GOLD_TICK_MS: GOLD_TICK_MS,
     TICKS_PER_DAY: TICKS_PER_DAY,
-    trainCost: function (level) { return 200 * level; },
+    INCOME_SCALE: INCOME_SCALE,
+    INCOME_OFFSET: INCOME_OFFSET,
+    ECONOMY_REV: ECONOMY_REV,
+    money: money,
+    dailyIncome: dailyIncome,
+    tickIncome: tickIncome,
+    trainCost: trainCost,
     LEVEL_CAP: LEVEL_CAP,
     EXP_PER_LEVEL: EXP_PER_LEVEL,
     classList: classList,
