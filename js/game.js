@@ -1767,6 +1767,7 @@
       var cells = g.units.map(function (u) {
         var tip = dungeonTip(u);
         var down = u.hp <= 0;
+        var fought = !!tip;
         var tag = down ? t("hud.defeated") : "";
         var hpLabel = tag ? tag : (u.hp + "/" + u.maxHp);
         return (
