@@ -2121,3 +2121,20 @@ html[lang="en"] .title-tag {
 @media (prefers-reduced-motion: reduce) {
   .ba-pips .fill { transition: none !important; }
 }
+
+
+.board-name {
+  justify-content: flex-start;
+  margin: 0.55em 0 0.25em;
+  flex-wrap: wrap;
+}
+.dungeon-pick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7em;
+  margin: 0.4em 0 0.8em;
+}
+@media (max-width: 640px) {
+  .dungeon-pick { grid-template-columns: 1fr; }
+}
+.dungeon-pick-card .btn { margin-top: 0.2em; }

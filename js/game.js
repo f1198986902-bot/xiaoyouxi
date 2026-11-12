@@ -53,6 +53,8 @@
     if (typeof person === "string") return person;
     var n = person.name || "";
     var cid = person.classId;
+    if (person.dungeonId === "d2" || n === "石门魔物 II" || n === "Stonegate Monster II" || n === "石门魔物二") return t("monster.name2");
+    if (person.dungeonId === "d1" || n === "石门魔物 I" || n === "Stonegate Monster I" || n === "石门魔物一") return t("monster.name1");
     if (n === "石门骑士 柯刚" || n === "Stonegate Knight Kegang" || n === "石门魔物" || n === "Stonegate Monster") return t("monster.name");
     if (n === "木人" || n === "Wooden Dummy" || n === "Training Dummy") return t("arena.dummyName");
     if (n === "教练" || n === "Instructor" || /^教练/.test(n) || /^Instructor\b/.test(n)) return t("arena.instructor");
@@ -194,8 +196,10 @@
       else if (view === "guild-rules") openGuildRules();
       else if (view === "bag") openBag();
       else if (view === "stats") openStats();
+      else if (view === "dungeon-pick") openDungeonPick();
       else if (view === "dungeon-deploy") openDungeonDeploy();
       else if (view === "dungeon-room") renderDungeonRoom();
+      else if (view === "personal-board") openPersonalBoard(true);
       else if (view === "welcome") showWelcome();
       else if (view === "dungeon-win") renderDungeonWin();
       else if (view === "dungeon-wipe") renderDungeonWipe();
@@ -278,7 +282,7 @@
       panel(
         t("dungeon.winTitle"),
         "<p>" +
-          t("dungeon.winLead") +
+          t(v.dungeonId ? "dungeon.winLead." + v.dungeonId : "dungeon.winLead") +
           "</p><p>" +
           t("dungeon.winGold", { gold: v.goldGain }) +
           "</p>" +
@@ -324,6 +328,9 @@
   var incomePauseAt = 0;
   var goldPopTimer = 0;
   var dungeonRun = null;
+  var pendingDungeonId = "d1";
+  var personalBoardBack = "arena";
+  var personalBoardRemote = { rows: [], ok: false };
 
   function later(fn, ms) {
     var id = setTimeout(fn, ms);
@@ -335,8 +342,22 @@
     for (i = 0; i < battleTimers.length; i++) clearTimeout(battleTimers[i]);
     battleTimers = [];
   }
+  function isMonsterArt(id) {
+    return id === "stonegate" || id === "axefiend";
+  }
+  function classArtId(person) {
+    if (!person) return "sword";
+    if (typeof person === "string") return D.CLASSES[person] ? person : "sword";
+    if (person.classId && D.CLASSES[person.classId]) return person.classId;
+    return "sword";
+  }
   function artClass(person) {
     if (!person) return "dummy";
+    if (typeof person === "string") {
+      if (person === "dummy") return "dummy";
+      return person;
+    }
+    if (person.artId) return person.artId;
     if (person.classId && D.CLASSES[person.classId]) return person.classId;
     if (person.className === "训练器具" || person.className === "Training Dummy") return "dummy";
     if (person.weapon && person.weapon.type === "train") return "dummy";
@@ -345,20 +366,35 @@
   function mugSrc(person, foe) {
     var id = typeof person === "string" ? person : artClass(person);
     if (id === "dummy") return "assets/units/mug-dummy.webp";
-    return "assets/units/mug-" + id + (foe ? "-foe" : "") + ".webp";
+    var foeTag = foe && !isMonsterArt(id) ? "-foe" : "";
+    return "assets/units/mug-" + id + foeTag + ".webp";
   }
   function standSrc(person, foe, facing, pose) {
-    var id = artClass(person);
+    var id = typeof person === "string" ? person : artClass(person);
     var extra = pose === "atk" ? "-atk" : "";
     if (id === "dummy") return "assets/units/stand-dummy-" + facing + ".webp";
-    return "assets/units/stand-" + id + "-" + facing + extra + (foe ? "-foe" : "") + ".webp";
+    var foeTag = foe && !isMonsterArt(id) ? "-foe" : "";
+    return "assets/units/stand-" + id + "-" + facing + extra + foeTag + ".webp";
+  }
+  function classMugSrc(person, foe) {
+    return mugSrc({ classId: classArtId(person) }, foe);
+  }
+  function classStandSrc(person, foe, facing, pose) {
+    return standSrc({ classId: classArtId(person) }, foe, facing, pose);
+  }
+  function artOnError(person, foe, kind, facing, pose) {
+    if (!person || typeof person === "string" || !person.artId) return "";
+    var fb = kind === "stand"
+      ? classStandSrc(person, foe, facing, pose)
+      : classMugSrc(person, foe);
+    return ' onerror="this.onerror=null;this.src=\'' + fb.replace(/'/g, "") + '\'"';
   }
   function weaponKind(person) {
     if (person && person.weapon && person.weapon.type) return person.weapon.type;
-    var id = artClass(person);
-    if (id === "archer") return "bow";
-    if (id === "cavalier" || id === "armor") return "lance";
-    if (id === "fighter") return "axe";
+    var cid = classArtId(person);
+    if (cid === "archer") return "bow";
+    if (cid === "cavalier" || cid === "armor") return "lance";
+    if (cid === "fighter") return "axe";
     return "sword";
   }
   function mugTag(person, foe, clsName) {
@@ -367,7 +403,9 @@
       (clsName || "mug") +
       '" src="' +
       mugSrc(person, foe) +
-      '" alt="" draggable="false" />'
+      '"' +
+      artOnError(person, foe, "mug") +
+      ' alt="" draggable="false" />'
     );
   }
   function hpTrack(hp, max) {
@@ -440,6 +478,43 @@
     }
   }
 
+  function dungeonIds() {
+    return (D.DUNGEON_ORDER && D.DUNGEON_ORDER.length) ? D.DUNGEON_ORDER.slice() : ["d1", "d2"];
+  }
+  function emptyDungeonTimes() {
+    var o = {}, i, ids = dungeonIds();
+    for (i = 0; i < ids.length; i++) o[ids[i]] = 0;
+    return o;
+  }
+  function migrateDungeonTimes(raw) {
+    var o = emptyDungeonTimes();
+    if (typeof raw === "number") {
+      o.d1 = raw;
+      return o;
+    }
+    if (raw && typeof raw === "object") {
+      dungeonIds().forEach(function (id) {
+        if (typeof raw[id] === "number") o[id] = raw[id];
+      });
+    }
+    return o;
+  }
+  function makePlayerId() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+    var i, s = "", hex = "0123456789abcdef";
+    for (i = 0; i < 32; i++) s += hex.charAt(Math.floor(Math.random() * 16));
+    return s.slice(0, 8) + "-" + s.slice(8, 12) + "-4" + s.slice(13, 16) + "-a" + s.slice(17, 20) + "-" + s.slice(20, 32);
+  }
+  function seasonIndexAt(ms) {
+    var epoch = D.SEASON_EPOCH_MS || Date.UTC(2025, 11, 31, 16, 0, 0);
+    var idx = Math.floor(((ms || Date.now()) - epoch) / (D.ARENA_SEASON_MS || 1296000000));
+    if (idx < 0) idx = 0;
+    return idx;
+  }
+  function seasonStartAt(idx) {
+    var epoch = D.SEASON_EPOCH_MS || Date.UTC(2025, 11, 31, 16, 0, 0);
+    return epoch + idx * (D.ARENA_SEASON_MS || 1296000000);
+  }
   function newUnit(name, classId, id) {
     var cls = D.CLASSES[classId];
     var b = cls.bases;
@@ -464,8 +539,9 @@
       weapons: [start],
       weaponUses: uses,
       promoted: false,
-      dungeonLockUntil: 0,
-      dungeonFoughtUntil: 0,
+      dungeonLockUntil: emptyDungeonTimes(),
+      dungeonFoughtUntil: emptyDungeonTimes(),
+      arenaFoughtUntil: 0,
       classBonusApplied: true
     };
   }
@@ -495,8 +571,9 @@
     if (u.hp > u.maxHp) u.hp = u.maxHp;
     if (u.level >= D.LEVEL_CAP) u.exp = 0;
     u.promoted = !!raw.promoted;
-    if (typeof raw.dungeonLockUntil === "number") u.dungeonLockUntil = raw.dungeonLockUntil;
-    if (typeof raw.dungeonFoughtUntil === "number") u.dungeonFoughtUntil = raw.dungeonFoughtUntil;
+    u.dungeonLockUntil = migrateDungeonTimes(raw.dungeonLockUntil);
+    u.dungeonFoughtUntil = migrateDungeonTimes(raw.dungeonFoughtUntil);
+    u.arenaFoughtUntil = typeof raw.arenaFoughtUntil === "number" ? raw.arenaFoughtUntil : 0;
     u.classBonusApplied = !!raw.classBonusApplied;
     if (!u.classBonusApplied) applyClassBonusOnce(u);
     ensureLanceLoadout(u);
@@ -559,11 +636,14 @@
       guildPoints: emptyGuildPoints(),
       arenaPoints: 0,
       guildJoinedAt: 0,
-      arenaSeasonStart: Date.now(),
-      arenaBoard: generateArenaBoard(Date.now()),
+      arenaSeasonStart: seasonStartAt(seasonIndexAt(Date.now())),
+      arenaBoard: generateArenaBoard(seasonStartAt(seasonIndexAt(Date.now()))),
       arenaPrizeNote: null,
-      arenaFightsUsed: 0,
-      arenaFightResetAt: 0
+      playerId: makePlayerId(),
+      playerName: "",
+      goldSpentThisSeason: 0,
+      lastPrizeSeason: seasonIndexAt(Date.now()) - 1,
+      seasonClock: "global"
     };
   }
 
@@ -643,11 +723,14 @@
         guildPoints: normalizeGuildPoints(data.guildPoints),
         arenaPoints: typeof data.arenaPoints === "number" ? Math.max(0, Math.floor(data.arenaPoints)) : 0,
         guildJoinedAt: typeof data.guildJoinedAt === "number" ? data.guildJoinedAt : 0,
-        arenaSeasonStart: typeof data.arenaSeasonStart === "number" ? data.arenaSeasonStart : Date.now(),
+        arenaSeasonStart: typeof data.arenaSeasonStart === "number" ? data.arenaSeasonStart : seasonStartAt(seasonIndexAt(Date.now())),
         arenaBoard: boardHasGuilds(data.arenaBoard) ? data.arenaBoard : generateArenaBoard(data.arenaSeasonStart || Date.now()),
         arenaPrizeNote: data.arenaPrizeNote || null,
-        arenaFightsUsed: typeof data.arenaFightsUsed === "number" ? Math.max(0, Math.floor(data.arenaFightsUsed)) : 0,
-        arenaFightResetAt: typeof data.arenaFightResetAt === "number" ? data.arenaFightResetAt : 0
+        playerId: typeof data.playerId === "string" && data.playerId ? String(data.playerId).slice(0, 64) : makePlayerId(),
+        playerName: typeof data.playerName === "string" ? String(data.playerName).slice(0, 16) : "",
+        goldSpentThisSeason: typeof data.goldSpentThisSeason === "number" ? Math.max(0, data.goldSpentThisSeason) : 0,
+        lastPrizeSeason: typeof data.lastPrizeSeason === "number" ? Math.floor(data.lastPrizeSeason) : null,
+        seasonClock: data.seasonClock === "global" ? "global" : ""
       };
       return ret;
     } catch (e) {
@@ -1129,46 +1212,213 @@
     for (i = 0; i < rows.length; i++) if (rows[i].you) return i + 1;
     return 0;
   }
-  function settleArenaSeason() {
+  function playerDisplayName() {
+    if (state && state.playerName && String(state.playerName).trim()) return String(state.playerName).trim();
+    return t("board.defaultName");
+  }
+  function currentSeasonIndex() {
+    return seasonIndexAt(Date.now());
+  }
+  function currentPlayerRecord(seasonIdx) {
+    if (seasonIdx == null) seasonIdx = currentSeasonIndex();
+    return {
+      playerId: state.playerId,
+      playerName: playerDisplayName(),
+      personalPoints: currentPersonalPoints(),
+      guildId: state.guildId || null,
+      goldSpent: state.goldSpentThisSeason || 0,
+      seasonIndex: seasonIdx,
+      updatedAt: Date.now()
+    };
+  }
+  var publishTimer = 0;
+  function queuePublish() {
     if (!state) return;
+    if (typeof Leaderboard === "undefined" || !Leaderboard.publish) return;
+    clearTimeout(publishTimer);
+    publishTimer = setTimeout(function () {
+      if (!state) return;
+      Leaderboard.publish(currentPlayerRecord());
+    }, 1200);
+  }
+  function mergeSeasonRows(remoteRows, seasonIdx) {
+    var rec = currentPlayerRecord(seasonIdx);
+    var rows = [], i, found = false;
+    remoteRows = remoteRows || [];
+    for (i = 0; i < remoteRows.length; i++) {
+      if (!remoteRows[i] || !remoteRows[i].playerId) continue;
+      if (remoteRows[i].playerId === rec.playerId) {
+        rows.push(rec);
+        found = true;
+      } else {
+        rows.push(remoteRows[i]);
+      }
+    }
+    if (!found) rows.push(rec);
+    return rows;
+  }
+  function shareOfPot(pot, list, myId, ptsFn) {
+    var total = 0, i, pts, raw, fl, rem, floors = [], bestI = 0, bestPts = -1, bestFrac = -1;
+    pot = Math.max(0, Math.floor(pot));
+    if (!list || !list.length || pot <= 0) return 0;
+    for (i = 0; i < list.length; i++) total += Math.max(0, ptsFn(list[i]) || 0);
+    if (total <= 0) return 0;
+    rem = pot;
+    for (i = 0; i < list.length; i++) {
+      pts = Math.max(0, ptsFn(list[i]) || 0);
+      raw = pot * pts / total;
+      fl = Math.floor(raw);
+      floors.push(fl);
+      rem -= fl;
+      if (pts > bestPts || (pts === bestPts && (raw - fl) > bestFrac)) {
+        bestPts = pts;
+        bestFrac = raw - fl;
+        bestI = i;
+      }
+    }
+    if (rem > 0) floors[bestI] += rem;
+    for (i = 0; i < list.length; i++) if (list[i] && list[i].playerId === myId) return floors[i];
+    return 0;
+  }
+  function computeSeasonPrizes(seasonIdx, remoteRows, remoteOk) {
+    var rows = remoteOk ? mergeSeasonRows(remoteRows, seasonIdx) : [currentPlayerRecord(seasonIdx)];
+    var my = currentPlayerRecord(seasonIdx);
+    var personalGold = 0;
+    var guildGold = 0;
+    var pot = D.PERSONAL_PRIZE_POT || 1000000;
+    var scorers = rows.filter(function (r) { return r && r.personalPoints > 0; });
+    if (my.personalPoints > 0 && scorers.length) {
+      personalGold = shareOfPot(pot, scorers, my.playerId, function (r) { return r.personalPoints; });
+    }
+    var spend = 0;
+    rows.forEach(function (r) { if (r && r.goldSpent > 0) spend += r.goldSpent; });
+    var gpot = Math.floor(spend * (D.GUILD_SPEND_RETURN || 0.9));
+    var end = seasonStartAt(seasonIdx + 1);
+    var guildRows = leaderboardRows(end);
+    var rank = playerRank(guildRows);
+    var joined = !!state.guildId;
+    if (gpot > 0 && joined) {
+      var shares = D.GUILD_PRIZE_SHARES || [0.7, 0.2, 0.1];
+      var slice = rank >= 1 && rank <= 3 ? Math.floor(gpot * shares[rank - 1]) : 0;
+      if (slice > 0) {
+        var members = rows.filter(function (r) { return r && r.guildId === state.guildId; });
+        if (members.length <= 1) guildGold = slice;
+        else {
+          var memPts = 0;
+          members.forEach(function (r) { memPts += Math.max(0, r.personalPoints || 0); });
+          if (memPts <= 0) guildGold = Math.floor(slice / members.length);
+          else guildGold = shareOfPot(slice, members, my.playerId, function (r) { return r.personalPoints || 0; });
+        }
+      }
+    }
+    return { personalGold: personalGold, guildGold: guildGold, rank: rank, joined: joined };
+  }
+  function paySeasonAndReset(seasonIdx, prize) {
+    if (prize.personalGold > 0) addGold(prize.personalGold, { prize: true });
+    if (prize.guildGold > 0) addGold(prize.guildGold, { prize: true });
+    state.arenaPrizeNote = {
+      rank: prize.rank,
+      joined: prize.joined,
+      personalGold: prize.personalGold || 0,
+      guildGold: prize.guildGold || 0
+    };
+    state.guildPoints = emptyGuildPoints();
+    state.arenaPoints = 0;
+    state.goldSpentThisSeason = 0;
+    state.lastPrizeSeason = seasonIdx;
+    var nextStart = seasonStartAt(seasonIdx + 1);
+    state.arenaSeasonStart = nextStart;
+    state.arenaBoard = generateArenaBoard(nextStart);
+    state.seasonClock = "global";
+  }
+  var settleBusy = false;
+  function settleArenaSeason(then) {
+    if (!state) {
+      if (then) then();
+      return;
+    }
+    if (settleBusy) {
+      if (then) then();
+      return;
+    }
     if (!boardHasGuilds(state.arenaBoard)) {
       state.arenaBoard = generateArenaBoard(state.arenaSeasonStart || Date.now());
     }
-    if (typeof state.arenaSeasonStart !== "number") state.arenaSeasonStart = Date.now();
     state.guildPoints = normalizeGuildPoints(state.guildPoints);
     if (typeof state.arenaPoints !== "number") state.arenaPoints = 0;
+    if (!state.playerId) state.playerId = makePlayerId();
     var now = Date.now();
-    var notes = [];
-    var end, rows, rank, prize, joined;
-    while (now - state.arenaSeasonStart >= D.ARENA_SEASON_MS) {
-      end = state.arenaSeasonStart + D.ARENA_SEASON_MS;
-      rows = leaderboardRows(end);
-      rank = playerRank(rows);
-      joined = !!state.guildId;
-      prize = joined && rank >= 1 && rank <= 3 ? D.ARENA_PRIZES[rank - 1] : 0;
-      if (prize > 0) addGold(prize);
-      notes.push({ rank: rank, gold: prize, joined: joined });
-      state.guildPoints = emptyGuildPoints();
-      state.arenaPoints = 0;
-      state.arenaSeasonStart = end;
-      state.arenaBoard = generateArenaBoard(end);
+    var idx = seasonIndexAt(now);
+    var needLocalSettle = false;
+    if (state.seasonClock !== "global") {
+      if (typeof state.arenaSeasonStart === "number" && now - state.arenaSeasonStart >= D.ARENA_SEASON_MS) {
+        needLocalSettle = true;
+      }
+      state.seasonClock = "global";
+      if (typeof state.lastPrizeSeason !== "number") state.lastPrizeSeason = idx - 1;
     }
-    if (notes.length) {
-      state.arenaPrizeNote = notes[notes.length - 1];
+    if (typeof state.lastPrizeSeason !== "number") state.lastPrizeSeason = idx - 1;
+    var payUntil = idx - 1;
+    var due = [];
+    if (needLocalSettle) due.push({ local: true, index: state.lastPrizeSeason + 1 });
+    var k;
+    for (k = state.lastPrizeSeason + 1; k <= payUntil; k++) due.push({ local: false, index: k });
+    if (!due.length) {
+      state.arenaSeasonStart = seasonStartAt(idx);
+      if (then) then();
+      return;
     }
+    function settleNext() {
+      if (!due.length) {
+        state.arenaSeasonStart = seasonStartAt(seasonIndexAt(Date.now()));
+        settleBusy = false;
+        queuePublish();
+        save();
+        if (then) then();
+        return;
+      }
+      var job = due.shift();
+      var seasonIdx = job.index;
+      function apply(rows, ok) {
+        var prize = computeSeasonPrizes(seasonIdx, rows, ok);
+        paySeasonAndReset(job.local ? idx - 1 : seasonIdx, prize);
+        settleNext();
+      }
+      if (job.local) {
+        apply([], false);
+      } else if (typeof Leaderboard !== "undefined" && Leaderboard.fetchDoc) {
+        Leaderboard.fetchDoc(function (doc, ok) {
+          apply(Leaderboard.rowsForSeason(doc, seasonIdx), ok);
+        });
+      } else {
+        apply([], false);
+      }
+    }
+    settleBusy = true;
+    settleNext();
   }
   function showArenaPrizeNote() {
     var note = state && state.arenaPrizeNote;
     if (!note) return false;
     state.arenaPrizeNote = null;
     save();
+    var guildLine;
+    if (note.guildGold > 0) {
+      guildLine = (note.rank ? t("arena.prizeWin", { rank: note.rank, gold: formatGold(note.guildGold) }) + " " : "") +
+        t("arena.prizeGuildShare", { gold: formatGold(note.guildGold) });
+    } else if (note.joined === false || !note.rank) {
+      guildLine = t("arena.prizeNone");
+    } else {
+      guildLine = t("arena.prizeMiss", { rank: note.rank });
+    }
+    var personalLine = (note.personalGold > 0)
+      ? t("arena.prizePersonal", { gold: formatGold(note.personalGold) })
+      : t("arena.prizePersonalNone");
     var body =
       "<p>" + t("arena.seasonOver") + "</p><p>" +
-      (note.gold > 0
-        ? t("arena.prizeWin", { rank: note.rank, gold: formatGold(note.gold) })
-        : note.joined === false || !note.rank
-        ? t("arena.prizeNone")
-        : t("arena.prizeMiss", { rank: note.rank })) +
+      personalLine +
+      "</p><p>" +
+      guildLine +
       "</p>" +
       actions({ "arena-after-prize": t("ui.ok") });
     openModal(panel(t("arena.board"), body, "narrow"));
@@ -1215,12 +1465,16 @@
     return events;
   }
 
-  function addGold(n) {
+  function addGold(n, opts) {
     var before = state.gold;
     var g = before + n;
     if (g < 0) g = 0;
     state.gold = g;
-    return g - before;
+    var actual = g - before;
+    if (actual < 0 && !(opts && (opts.prize || opts.skipSpend))) {
+      state.goldSpentThisSeason = (state.goldSpentThisSeason || 0) + (-actual);
+    }
+    return actual;
   }
 
   function grantOneLevel() {
@@ -1302,23 +1556,61 @@
     return utcMidnight + 86400000;
   }
 
+  function timeMap(u, key) {
+    if (!u) return emptyDungeonTimes();
+    if (!u[key] || typeof u[key] !== "object" || typeof u[key] === "number") {
+      u[key] = migrateDungeonTimes(u[key]);
+    }
+    return u[key];
+  }
+  function timeAt(u, key, dungeonId) {
+    var map = timeMap(u, key);
+    return (map && dungeonId && typeof map[dungeonId] === "number") ? map[dungeonId] : 0;
+  }
+  function setTimeAt(u, key, dungeonId, ms) {
+    var map = timeMap(u, key);
+    if (!dungeonId) return;
+    map[dungeonId] = ms;
+  }
+  function currentDungeonId() {
+    if (dungeonRun && dungeonRun.dungeonId) return dungeonRun.dungeonId;
+    return pendingDungeonId || "d1";
+  }
+
   function clearLockIfDue(u, now) {
     if (!u) return false;
-    if (typeof u.dungeonLockUntil === "number" && u.dungeonLockUntil > 0 && u.dungeonLockUntil <= now) {
-      u.dungeonLockUntil = 0;
-      u.hp = u.maxHp;
-      return true;
+    now = now || Date.now();
+    var map = timeMap(u, "dungeonLockUntil");
+    var changed = false, healed = false, id;
+    for (id in map) {
+      if (!Object.prototype.hasOwnProperty.call(map, id)) continue;
+      if (typeof map[id] === "number" && map[id] > 0 && map[id] <= now) {
+        map[id] = 0;
+        changed = true;
+        healed = true;
+      }
     }
-    return false;
+    if (healed) u.hp = u.maxHp;
+    return changed;
   }
 
   function clearFoughtIfDue(u, now) {
     if (!u) return false;
-    if (typeof u.dungeonFoughtUntil === "number" && u.dungeonFoughtUntil > 0 && u.dungeonFoughtUntil <= now) {
-      u.dungeonFoughtUntil = 0;
-      return true;
+    now = now || Date.now();
+    var map = timeMap(u, "dungeonFoughtUntil");
+    var changed = false, id;
+    for (id in map) {
+      if (!Object.prototype.hasOwnProperty.call(map, id)) continue;
+      if (typeof map[id] === "number" && map[id] > 0 && map[id] <= now) {
+        map[id] = 0;
+        changed = true;
+      }
     }
-    return false;
+    if (typeof u.arenaFoughtUntil === "number" && u.arenaFoughtUntil > 0 && u.arenaFoughtUntil <= now) {
+      u.arenaFoughtUntil = 0;
+      changed = true;
+    }
+    return changed;
   }
 
   function refreshLocks(now) {
@@ -1329,80 +1621,88 @@
       if (clearLockIfDue(state.party[i], now)) changed = true;
       if (clearFoughtIfDue(state.party[i], now)) changed = true;
     }
-    if (refreshArenaFights(now)) changed = true;
     return changed;
   }
 
-  function refreshArenaFights(now) {
+  function isArenaFought(u, now) {
     now = now || Date.now();
-    if (!state) return false;
-    if (typeof state.arenaFightResetAt === "number" && state.arenaFightResetAt > 0 && state.arenaFightResetAt <= now) {
-      state.arenaFightsUsed = 0;
-      state.arenaFightResetAt = 0;
-      return true;
-    }
-    return false;
+    if (!u) return false;
+    clearFoughtIfDue(u, now);
+    return !!(typeof u.arenaFoughtUntil === "number" && u.arenaFoughtUntil > now);
   }
 
-  function arenaFightsLeft() {
-    refreshArenaFights();
-    var used = (state && state.arenaFightsUsed) || 0;
-    return Math.max(0, (D.ARENA_FIGHTS_MAX || 5) - used);
+  function markArenaFought(u, now) {
+    if (!u) return;
+    now = now || Date.now();
+    u.arenaFoughtUntil = nextUnlockMs(now);
   }
 
-  function spendArenaFight() {
-    refreshArenaFights();
-    state.arenaFightsUsed = (state.arenaFightsUsed || 0) + 1;
-    if (!state.arenaFightResetAt) state.arenaFightResetAt = nextUnlockMs(Date.now());
+  function clearArenaFought(u) {
+    if (!u) return;
+    u.arenaFoughtUntil = 0;
   }
 
-  function resetArenaFights() {
-    state.arenaFightsUsed = 0;
-    state.arenaFightResetAt = 0;
-  }
-
-  function isDungeonLocked(u, now) {
+  function isDungeonLocked(u, now, dungeonId) {
     now = now || Date.now();
     clearLockIfDue(u, now);
-    return !!(u && typeof u.dungeonLockUntil === "number" && u.dungeonLockUntil > now);
+    dungeonId = dungeonId || currentDungeonId();
+    return !!(u && timeAt(u, "dungeonLockUntil", dungeonId) > now);
   }
 
-  function isDungeonFought(u, now) {
+  function isDungeonFought(u, now, dungeonId) {
     now = now || Date.now();
     clearFoughtIfDue(u, now);
-    return !!(u && typeof u.dungeonFoughtUntil === "number" && u.dungeonFoughtUntil > now);
+    dungeonId = dungeonId || currentDungeonId();
+    return !!(u && timeAt(u, "dungeonFoughtUntil", dungeonId) > now);
   }
 
-  function canDungeonFight(u, now) {
+  function canDungeonFight(u, now, dungeonId) {
     now = now || Date.now();
-    return !!(u && u.hp > 0 && !isDungeonLocked(u, now) && !isDungeonFought(u, now));
+    dungeonId = dungeonId || currentDungeonId();
+    return !!(u && u.hp > 0 && !isDungeonLocked(u, now, dungeonId) && !isDungeonFought(u, now, dungeonId));
   }
 
-  function lockUnit(u, now) {
+  function lockUnit(u, now, dungeonId) {
     if (!u) return;
     now = now || Date.now();
-    u.dungeonLockUntil = nextUnlockMs(now);
+    dungeonId = dungeonId || currentDungeonId();
+    setTimeAt(u, "dungeonLockUntil", dungeonId, nextUnlockMs(now));
   }
 
-  function markDungeonFought(u, now) {
+  function markDungeonFought(u, now, dungeonId) {
     if (!u) return;
     now = now || Date.now();
-    u.dungeonFoughtUntil = nextUnlockMs(now);
+    dungeonId = dungeonId || currentDungeonId();
+    setTimeAt(u, "dungeonFoughtUntil", dungeonId, nextUnlockMs(now));
   }
 
-  function lockoutLabel(u) {
-    if (!isDungeonLocked(u)) return "";
-    var p = shanghaiParts(u.dungeonLockUntil);
+  function lockoutLabel(u, dungeonId) {
+    dungeonId = dungeonId || currentDungeonId();
+    if (!isDungeonLocked(u, Date.now(), dungeonId)) return "";
+    var until = timeAt(u, "dungeonLockUntil", dungeonId);
+    var p = shanghaiParts(until);
     var nowP = shanghaiParts(Date.now());
     if (p.y === nowP.y && p.m === nowP.m && p.d === nowP.d) return t("lock.today");
     return t("lock.tomorrow");
   }
 
-  function dungeonLimitLabel(u) {
-    if (isDungeonLocked(u)) return lockoutLabel(u);
-    if (isDungeonFought(u)) return t("lock.fought");
+  function dungeonLimitLabel(u, dungeonId) {
+    dungeonId = dungeonId || currentDungeonId();
+    if (isDungeonLocked(u, Date.now(), dungeonId)) return lockoutLabel(u, dungeonId);
+    if (isDungeonFought(u, Date.now(), dungeonId)) return t("lock.fought");
     if (u && u.hp <= 0) return t("lock.noHp");
     return "";
+  }
+
+  function dungeonTip(u) {
+    var parts = [], i, id, ids = dungeonIds(), lab;
+    for (i = 0; i < ids.length; i++) {
+      id = ids[i];
+      lab = dungeonLimitLabel(u, id);
+      if (lab) parts.push(t("dungeon." + id) + " " + lab);
+    }
+    if (isArenaFought(u)) parts.push(t("arena.fought"));
+    return parts.join("　");
   }
 
   function unitById(id) {
@@ -1465,10 +1765,9 @@
     var incomeLine = t("hud.income", { rate: formatTick(rate) }) + "　" + t("hud.incomeDay", { day: formatGold(dayGold) });
     var roster = partyGroups(state.party).map(function (g) {
       var cells = g.units.map(function (u) {
-        var down = isDungeonLocked(u);
-        var fought = !down && isDungeonFought(u);
-        var tag = down ? t("hud.defeated") : fought ? t("hud.fought") : "";
-        var tip = dungeonLimitLabel(u);
+        var tip = dungeonTip(u);
+        var down = u.hp <= 0;
+        var tag = down ? t("hud.defeated") : "";
         var hpLabel = tag ? tag : (u.hp + "/" + u.maxHp);
         return (
           '<button type="button" class="hud-mug' +
@@ -1545,7 +1844,6 @@
       (state.guildId
         ? t("hud.points", { points: currentGuildPoints() })
         : t("hud.noGuild")) +
-      "　" + t("hud.goldBonus") +
       '</div>' +
       langSwitcher(true) +
       '<span id="gold-pop" class="gold-pop" hidden></span></div>' +
@@ -1723,7 +2021,7 @@
       TownMap.switchMap("town", { x: 12, y: 13 });
       renderHud();
     } else if (place === "dungeon") {
-      openDungeonDeploy();
+      openDungeonPick();
     }
   }
 
@@ -1732,24 +2030,31 @@
     return list[(roll || rng()).int(0, list.length - 1)];
   }
 
-  function dungeonWaveData(waveIndex) {
+  function dungeonDef(dungeonId) {
+    dungeonId = dungeonId || currentDungeonId();
+    if (D.DUNGEONS && D.DUNGEONS[dungeonId]) return D.DUNGEONS[dungeonId];
     var waves = D.DUNGEON_WAVES || [D.DUNGEON_BOSS];
-    return waves[waveIndex] || waves[0];
+    if (dungeonId === "d2") return waves[1] || waves[0];
+    return waves[0];
   }
 
-  function makeMonster(waveIndex, hp, weaponId) {
-    var b = dungeonWaveData(waveIndex);
+  function makeMonster(dungeonId, hp, weaponId) {
+    if (typeof dungeonId === "number") dungeonId = dungeonId >= 1 ? "d2" : "d1";
+    var b = dungeonDef(dungeonId || currentDungeonId());
     var wId = weaponId;
     if (!wId && dungeonRun && dungeonRun.boss && dungeonRun.boss.weapon && dungeonRun.boss.weapon.id &&
-        (dungeonRun.wave == null || dungeonRun.wave === waveIndex)) {
+        dungeonRun.dungeonId === (dungeonId || currentDungeonId())) {
       wId = dungeonRun.boss.weapon.id;
     }
     if (!wId) {
       if (b.weaponPool === "iron") wId = randomIronWeaponId();
       else wId = b.weaponId;
     }
+    var id = b.id || dungeonId || "d1";
     return {
-      name: "石门魔物",
+      name: id === "d2" ? "石门魔物 II" : "石门魔物 I",
+      dungeonId: id,
+      artId: b.artId || (id === "d2" ? "axefiend" : "stonegate"),
       classId: b.classId,
       className: b.className,
       level: b.level,
@@ -1765,7 +2070,7 @@
   }
 
   function makeBossFighter(hp, weaponId) {
-    return makeMonster(dungeonRun && dungeonRun.wave != null ? dungeonRun.wave : 0, hp, weaponId);
+    return makeMonster(currentDungeonId(), hp, weaponId);
   }
 
   function deployRowHtml(u) {
@@ -1813,20 +2118,48 @@
     }).join("");
   }
 
-  function openDungeonDeploy() {
+  function openDungeonPick() {
+    refreshLocks();
+    pendingDungeonId = pendingDungeonId || "d1";
+    var cards = dungeonIds().map(function (id) {
+      return (
+        '<div class="guild-card dungeon-pick-card"><h4>' +
+        esc(t("dungeon." + id)) +
+        "</h4><p>" +
+        esc(t("dungeon.blurb." + id)) +
+        '</p><button type="button" class="btn btn-gold" data-act="dungeon-choose" data-id="' +
+        id +
+        '">' +
+        t("dungeon.enter." + id) +
+        "</button></div>"
+      );
+    }).join("");
+    var body =
+      "<p class='lead'>" + t("dungeon.chooseLead") + "</p>" +
+      "<p class='muted'>" + t("dungeon.lead") + "</p>" +
+      '<div class="guild-pick dungeon-pick">' + cards + "</div>" +
+      actions({ leave: t("ui.leave") });
+    openModal(panel(t("dungeon.chooseTitle"), body, "wide"));
+    setView("dungeon-pick");
+  }
+
+  function openDungeonDeploy(dungeonId) {
+    if (dungeonId) pendingDungeonId = dungeonId;
+    pendingDungeonId = pendingDungeonId || "d1";
     refreshLocks();
     var rows = groupedPickerHtml(state.party, deployRowHtml);
     var body =
-      "<p>" + t("dungeon.lead") + "</p>" +
+      "<p>" + t("dungeon.blurb." + pendingDungeonId) + "</p>" +
       "<p class='muted'>" + t("dungeon.note") + "</p>" +
       '<div class="deploy-list">' +
       rows +
       "</div>" +
       actions({
-        "dungeon-enter": t("dungeon.enter"),
+        "dungeon-enter": t("dungeon.enter." + pendingDungeonId),
+        "dungeon-pick": t("ui.back"),
         leave: t("ui.leave")
       });
-    openModal(panel(t("dungeon.title"), body, "wide"));
+    openModal(panel(t("dungeon." + pendingDungeonId), body, "wide"));
     setView("dungeon-deploy");
   }
 
@@ -1837,7 +2170,7 @@
       el = boxes[i];
       if (!el.checked || el.disabled) continue;
       u = unitById(el.getAttribute("data-deploy"));
-      if (u && !isDungeonLocked(u) && u.hp > 0 && !isWeaponBroken(u)) ids.push(u.id);
+      if (u && canDungeonFight(u) && !isWeaponBroken(u)) ids.push(u.id);
     }
     return ids;
   }
@@ -1847,11 +2180,14 @@
       toast(t("dungeon.needUnit"));
       return;
     }
+    var dungeonId = pendingDungeonId || "d1";
+    var def = dungeonDef(dungeonId);
+    var weaponId = def.weaponPool === "iron" ? randomIronWeaponId() : def.weaponId;
     dungeonRun = {
       ids: ids.slice(),
       living: ids.slice(),
-      wave: 0,
-      boss: makeMonster(0, null, randomIronWeaponId()),
+      dungeonId: dungeonId,
+      boss: makeMonster(dungeonId, null, weaponId),
       loot: {},
       lastAtk: null,
       phase: "player"
@@ -1864,7 +2200,7 @@
     if (!dungeonRun) return out;
     for (i = 0; i < dungeonRun.living.length; i++) {
       u = unitById(dungeonRun.living[i]);
-      if (u && u.hp > 0 && !isDungeonLocked(u)) out.push(u);
+      if (u && u.hp > 0 && !isDungeonLocked(u, Date.now(), dungeonRun.dungeonId)) out.push(u);
     }
     return out;
   }
@@ -1874,24 +2210,18 @@
     var living = dungeonLivingUnits();
     dungeonRun.living = living.map(function (u) { return u.id; });
     if (dungeonRun.boss.hp <= 0) {
-      if ((dungeonRun.wave || 0) < 1) {
-        advanceDungeonWave();
-        living = dungeonLivingUnits();
-        dungeonRun.living = living.map(function (u) { return u.id; });
-      } else {
-        finishDungeonWin();
-        return;
-      }
+      finishDungeonWin();
+      return;
     }
     if (!living.length) {
       finishDungeonWipe();
       return;
     }
     var b = dungeonRun.boss;
-    var wave = dungeonRun.wave || 0;
-    var ready = living.filter(function (u) { return canDungeonFight(u) && !isWeaponBroken(u); });
+    var dungeonId = dungeonRun.dungeonId || "d1";
+    var ready = living.filter(function (u) { return canDungeonFight(u, Date.now(), dungeonId) && !isWeaponBroken(u); });
     var rows = groupedPickerHtml(living, function (u) {
-      var can = canDungeonFight(u) && !isWeaponBroken(u);
+      var can = canDungeonFight(u, Date.now(), dungeonId) && !isWeaponBroken(u);
       var broken = isWeaponBroken(u);
       return (
         '<div class="deploy-row' + (can ? "" : " is-locked") + '">' +
@@ -1919,7 +2249,7 @@
       );
     });
     var body =
-      "<p>" + t(wave >= 1 ? "dungeon.roomLead2" : "dungeon.roomLead1") + "</p>" +
+      "<p>" + t(dungeonId === "d2" ? "dungeon.roomLead2" : "dungeon.roomLead1") + "</p>" +
       (ready.length ? "" : "<p class='muted'>" + t("dungeon.allFought") + "</p>") +
       '<div class="boss-card">' +
       mugTag(b, true, "mug") +
@@ -1928,7 +2258,7 @@
       "　" +
       esc(classNameOf(b)) +
       "　Lv." +
-      (b.level || dungeonWaveData(wave).level) +
+      (b.level || dungeonDef(dungeonId).level) +
       "</h4><div class='hud-bar hp'><span>HP</span>" +
       hpTrack(b.hp, b.maxHp) +
       "<span>" +
@@ -1943,13 +2273,13 @@
       rows +
       "</div>" +
       actions({ "dungeon-retreat": t("dungeon.retreat") });
-    openModal(panel(t("dungeon.room"), body, "wide"), true);
+    openModal(panel(t("dungeon." + dungeonId), body, "wide"), true);
     setView("dungeon-room");
   }
 
   function beginDungeonAttack(id) {
     var u = unitById(id);
-    if (!dungeonRun || !u || !canDungeonFight(u)) return;
+    if (!dungeonRun || !u || !canDungeonFight(u, Date.now(), dungeonRun.dungeonId)) return;
     if (!assertUsableWeapon(u)) return;
     setActive(u.id);
     dungeonRun.lastAtk = u.id;
@@ -2018,11 +2348,7 @@
     var note;
     var title;
     var next;
-    if (info.bossDead && (dungeonRun.wave || 0) < 1) {
-      title = t("dungeon.waveClear");
-      note = t("dungeon.waveClearNote");
-      next = "dungeon-next-wave";
-    } else if (info.bossDead) {
+    if (info.bossDead) {
       title = t("dungeon.roundWin");
       note = t("dungeon.roundWinNote");
       next = "dungeon-win";
@@ -2091,43 +2417,35 @@
     return grantCopperReward(ids, forcedId && D.WEAPONS[forcedId] ? forcedId : pool[rng().int(0, pool.length - 1)]);
   }
 
-  function advanceDungeonWave() {
-    if (!dungeonRun) return;
-    if (!dungeonRun.loot) dungeonRun.loot = {};
-    if (!dungeonRun.loot.copper) {
-      dungeonRun.loot.copper = grantCopperReward(dungeonRun.ids, state._forceCopper || null);
-      state._forceCopper = null;
-      if (dungeonRun.loot.copper && dungeonRun.loot.copper.weapon && dungeonRun.loot.copper.unit) {
-        toast(t("dungeon.lootCopper", {
-          weapon: weaponName(dungeonRun.loot.copper.weapon),
-          name: displayName(dungeonRun.loot.copper.unit)
-        }));
-      }
-    }
-    dungeonRun.wave = 1;
-    dungeonRun.boss = makeMonster(1);
-    dungeonRun.phase = "player";
-  }
-
   function finishDungeonWin(forcedSilver) {
     var ids = dungeonRun ? dungeonRun.ids : state.party.map(function (p) { return p.id; });
     var loot = (dungeonRun && dungeonRun.loot) ? dungeonRun.loot : {};
-    if (!loot.silver) {
-      loot.silver = grantSilverReward(ids, forcedSilver || state._forceSilver || null);
-      state._forceSilver = null;
-      if (state._forceTome === true || (state._forceTome !== false && rng().int(0, 99) < 50)) {
-        if (!state.items) state.items = {};
-        state.items.promoBook = (state.items.promoBook || 0) + 1;
-        loot.tome = true;
+    var dungeonId = dungeonRun ? dungeonRun.dungeonId : pendingDungeonId;
+    var def = dungeonDef(dungeonId);
+    if (def.reward === "copper" || dungeonId === "d1") {
+      if (!loot.copper) {
+        loot.copper = grantCopperReward(ids, state._forceCopper || null);
+        state._forceCopper = null;
       }
-      state._forceTome = null;
+    } else {
+      if (!loot.silver) {
+        loot.silver = grantSilverReward(ids, forcedSilver || state._forceSilver || null);
+        state._forceSilver = null;
+        if (state._forceTome === true || (state._forceTome !== false && rng().int(0, 99) < 50)) {
+          if (!state.items) state.items = {};
+          state.items.promoBook = (state.items.promoBook || 0) + 1;
+          loot.tome = true;
+        }
+        state._forceTome = null;
+      }
     }
     pendingLevelUps = [];
+    var endedId = dungeonId;
     dungeonRun = null;
     closeBattle();
     renderHud();
     save();
-    lastVictory = { goldGain: 0, loot: loot, drop: loot.silver || loot.copper || null };
+    lastVictory = { goldGain: 0, loot: loot, drop: loot.silver || loot.copper || null, dungeonId: endedId };
     renderDungeonWin();
   }
 
@@ -2200,10 +2518,12 @@
         "</td></tr>"
       );
     }).join("");
-    var left = D.ARENA_SEASON_MS - (now - (state.arenaSeasonStart || now));
+    var left = D.ARENA_SEASON_MS - (now - (state.arenaSeasonStart || seasonStartAt(currentSeasonIndex())));
+    if (left < 0) left = 0;
     return (
       "<p class='rank-prize'>" + t("arena.prizes") + "</p>" +
       "<p class='muted'>" + t("arena.seasonLeft", { time: formatSeasonTime(left) }) + "</p>" +
+      '<p><button type="button" class="btn" data-act="personal-board">' + t("arena.openBoard") + "</button></p>" +
       "<table class='rank-table'><thead><tr><th>" +
       t("arena.rank") +
       "</th><th>" +
@@ -2216,7 +2536,11 @@
     );
   }
   function openGuild() {
-    settleArenaSeason();
+    settleArenaSeason(function () {
+      openGuildAfterSettle();
+    });
+  }
+  function openGuildAfterSettle() {
     if (!state.guildId) {
       openGuildJoin();
       return;
@@ -2677,34 +3001,131 @@
   }
 
   function openArena(skipPrize) {
-    settleArenaSeason();
-    if (!skipPrize && showArenaPrizeNote()) return;
-    var p = active();
-    var body =
-      "<p class='lead'>" + t("arena.leadFull") + "</p>" +
-      "<p>" +
-      t("arena.deployLine", { name: displayName(p) }) +
-      "　" +
-      classNameOf(p) +
-      "　Lv." +
-      p.level +
-      "　HP " + p.hp + "/" + p.maxHp +
-      "</p>" +
-      "<p>" + t("arena.points", { points: currentPersonalPoints() }) +
-      (state.guildId
-        ? "　" + t("guild.current", { name: guildName(state.guildId) }) + "　" +
-          t("guild.points", { points: currentGuildPoints() })
-        : "　" + t("arena.needGuild")) +
-      "</p>" +
-      "<p>" + t("arena.fights", { left: arenaFightsLeft(), max: D.ARENA_FIGHTS_MAX || 5 }) + "</p>" +
-      "<p class='muted'>" + t("arena.noteFull") + "</p>" +
-      rankTableHtml() +
-      actions({
-        "arena-fight": { label: t("arena.fightNow"), disabled: arenaFightsLeft() <= 0 || isWeaponBroken(p) },
-        leave: t("ui.leave")
+    settleArenaSeason(function () {
+      if (!skipPrize && showArenaPrizeNote()) return;
+      var p = active();
+      var used = isArenaFought(p);
+      var body =
+        "<p class='lead'>" + t("arena.leadFull") + "</p>" +
+        "<p>" +
+        t("arena.deployLine", { name: displayName(p) }) +
+        "　" +
+        classNameOf(p) +
+        "　Lv." +
+        p.level +
+        "　HP " + p.hp + "/" + p.maxHp +
+        "</p>" +
+        "<p>" + t("arena.points", { points: currentPersonalPoints() }) +
+        (state.guildId
+          ? "　" + t("guild.current", { name: guildName(state.guildId) }) + "　" +
+            t("guild.points", { points: currentGuildPoints() })
+          : "　" + t("arena.needGuild")) +
+        "</p>" +
+        "<p>" + t(used ? "arena.unitUsed" : "arena.unitReady", { name: displayName(p) }) + "</p>" +
+        "<p class='muted'>" + t("arena.noteFull") + "</p>" +
+        rankTableHtml() +
+        actions({
+          "arena-fight": { label: t("arena.fightNow"), disabled: used || isWeaponBroken(p) || p.hp <= 0 },
+          leave: t("ui.leave")
+        });
+      openModal(panel(t("arena.title"), body, "wide"));
+      setView("arena");
+    });
+  }
+
+  function openPersonalBoard(keepFetched) {
+    personalBoardBack = (activeUi === "guild" || ($("#modal") && $("#modal").dataset.view === "guild")) ? "guild"
+      : (activeUi === "arena" || ($("#modal") && $("#modal").dataset.view === "arena")) ? "arena"
+      : (personalBoardBack || "arena");
+    function render(rows, ok) {
+      personalBoardRemote = { rows: rows || [], ok: !!ok };
+      var rec = currentPlayerRecord();
+      var list = mergeSeasonRows(rows || [], rec.seasonIndex);
+      list.sort(function (a, b) {
+        var pa = a.personalPoints || 0, pb = b.personalPoints || 0;
+        if (pb !== pa) return pb - pa;
+        if (a.playerId === rec.playerId) return -1;
+        if (b.playerId === rec.playerId) return 1;
+        return String(a.playerName || "").localeCompare(String(b.playerName || ""));
       });
-    openModal(panel(t("arena.title"), body, "wide"));
-    setView("arena");
+      var table = list.map(function (row, i) {
+        var you = row.playerId === rec.playerId;
+        return (
+          "<tr class='" + (you ? "you" : "") + "'><td>" +
+          (i + 1) +
+          "</td><td>" +
+          esc(row.playerName || t("board.defaultName")) +
+          (you ? "　" + t("arena.youMark") : "") +
+          "</td><td>" +
+          (row.personalPoints || 0) +
+          "</td><td>" +
+          (row.guildId && D.GUILDS[row.guildId] ? esc(guildName(row.guildId)) : "—") +
+          "</td></tr>"
+        );
+      }).join("");
+      var nameVal = state.playerName ? esc(state.playerName) : "";
+      var status = ok
+        ? (list.length > 1 ? t("board.synced") : t("board.noPlayers"))
+        : t("board.localOnly");
+      var now = Date.now();
+      var left = D.ARENA_SEASON_MS - (now - seasonStartAt(currentSeasonIndex()));
+      if (left < 0) left = 0;
+      var body =
+        "<p class='rank-prize'>" + t("arena.prizes") + "</p>" +
+        "<p class='muted'>" + t("arena.seasonLeft", { time: formatSeasonTime(left) }) + "</p>" +
+        "<p class='muted'>" + status + "</p>" +
+        '<div class="create-name board-name"><label for="player-name">' +
+        t("board.nameLabel") +
+        '</label><input id="player-name" type="text" maxlength="16" value="' +
+        nameVal +
+        '" /><button type="button" class="btn" data-act="save-name">' +
+        t("board.saveName") +
+        "</button></div>" +
+        "<p class='muted'>" + t("board.nameHint") + "</p>" +
+        "<table class='rank-table'><thead><tr><th>" +
+        t("arena.rank") +
+        "</th><th>" +
+        t("board.colName") +
+        "</th><th>" +
+        t("arena.score") +
+        "</th><th>" +
+        t("board.colGuild") +
+        "</th></tr></thead><tbody>" +
+        table +
+        "</tbody></table>" +
+        rankTableHtml() +
+        actions({
+          "personal-back": t("ui.back"),
+          leave: t("ui.leave")
+        });
+      openModal(panel(t("arena.personalBoard"), body, "wide"));
+      setView("personal-board");
+    }
+    if (keepFetched && personalBoardRemote) {
+      render(personalBoardRemote.rows, personalBoardRemote.ok);
+    }
+    if (typeof Leaderboard !== "undefined" && Leaderboard.fetchDoc) {
+      Leaderboard.fetchDoc(function (doc, ok) {
+        var rows = Leaderboard.rowsForSeason(doc, currentSeasonIndex());
+        render(rows, ok);
+      });
+    } else if (!(keepFetched && personalBoardRemote)) {
+      render([], false);
+    }
+  }
+
+  function savePlayerName() {
+    var el = $("#player-name");
+    var name = el && el.value ? String(el.value).trim() : "";
+    if (!name) {
+      toast(t("board.nameNeed"));
+      return;
+    }
+    state.playerName = name.slice(0, 16);
+    save();
+    queuePublish();
+    toast(t("board.nameSaved"));
+    openPersonalBoard(true);
   }
 
   function openBag() {
@@ -2921,12 +3342,12 @@
       if (!assertUsableWeapon(p)) return;
     }
     if (ctx.kind === "arena") {
-      if (arenaFightsLeft() <= 0) {
+      if (isArenaFought(p)) {
         toast(t("arena.noFights"));
         openArena();
         return;
       }
-      spendArenaFight();
+      markArenaFought(p);
     }
     if (ctx.fee) addGold(-ctx.fee);
     ctx.preHp = p.hp;
@@ -3073,7 +3494,9 @@
       id +
       '"><img class="stand-art" src="' +
       standSrc(unit, foe, facing) +
-      '" alt="" draggable="false" /><div class="fe-pop" id="b-pop-' +
+      '"' +
+      artOnError(unit, foe, "stand", facing) +
+      ' alt="" draggable="false" /><div class="fe-pop" id="b-pop-' +
       id +
       '"></div></div>'
     );
@@ -3435,6 +3858,7 @@
       if (p.hp < 0) p.hp = 0;
       if (win) {
         addPersonalPoints(D.ARENA_WIN_POINTS);
+        queuePublish();
         note = t("arena.win");
         rewardLine = t("arena.pointsGain", {
           n: D.ARENA_WIN_POINTS,
@@ -3602,6 +4026,7 @@
       if (!state.guildPoints) state.guildPoints = {};
       if (state.guildPoints[id] == null) state.guildPoints[id] = 0;
       save();
+      queuePublish();
       renderHud();
       openGuild();
       return;
@@ -3683,6 +4108,27 @@
       openArena(true);
       return;
     }
+    if (act === "personal-board") {
+      openPersonalBoard();
+      return;
+    }
+    if (act === "personal-back") {
+      if (personalBoardBack === "guild") openGuild();
+      else openArena(true);
+      return;
+    }
+    if (act === "save-name") {
+      savePlayerName();
+      return;
+    }
+    if (act === "dungeon-pick") {
+      openDungeonPick();
+      return;
+    }
+    if (act === "dungeon-choose") {
+      if (id) openDungeonDeploy(id);
+      return;
+    }
     if (act === "arena" || act === "arena-fight") {
       p = active();
       if (act === "arena-fight") {
@@ -3690,7 +4136,7 @@
           toast(t("arena.noHp", { name: displayName(p) }));
           return;
         }
-        if (arenaFightsLeft() <= 0) {
+        if (isArenaFought(p)) {
           toast(t("arena.noFights"));
           return;
         }
@@ -3756,8 +4202,8 @@
     if (act === "dungeon-next-wave") {
       closeBattle();
       pendingBattle = null;
-      advanceDungeonWave();
-      renderDungeonRoom();
+      if (dungeonRun && dungeonRun.boss && dungeonRun.boss.hp <= 0) finishDungeonWin();
+      else renderDungeonRoom();
       return;
     }
     if (act === "repair") {
@@ -3841,14 +4287,13 @@
     if (!it || !state.items) return;
     if (id === "challengeWrit") {
       if (!(state.items.challengeWrit > 0)) return;
-      refreshArenaFights();
-      if (arenaFightsLeft() >= (D.ARENA_FIGHTS_MAX || 5)) {
-        if (!silent) toast(t("bag.writFull"));
+      if (!isArenaFought(p)) {
+        if (!silent) toast(t("bag.writFull", { name: displayName(p) }));
         return;
       }
       state.items.challengeWrit -= 1;
-      resetArenaFights();
-      if (!silent) toast(t("bag.writUsed"));
+      clearArenaFought(p);
+      if (!silent) toast(t("bag.writUsed", { name: displayName(p) }));
       save();
       renderHud();
       if (!silent && $("#modal") && $("#modal").dataset.view === "bag") openBag();
@@ -3926,20 +4371,22 @@
 
   function enterTown(fresh) {
     showScreen("screen-town");
-    settleArenaSeason();
     renderHud();
     mountTownMap();
     startIncomeTimer();
     catchUpIncome();
     renderHud();
-    if (state.arenaPrizeNote && !(fresh && !state.introShown)) {
-      showArenaPrizeNote();
-    }
-    if (fresh && !state.introShown) {
-      state.introShown = true;
-      save();
-      showWelcome();
-    }
+    settleArenaSeason(function () {
+      renderHud();
+      queuePublish();
+      if (fresh && !state.introShown) {
+        state.introShown = true;
+        save();
+        showWelcome();
+        return;
+      }
+      if (state.arenaPrizeNote) showArenaPrizeNote();
+    });
   }
 
   function refreshTitle() {
@@ -4025,7 +4472,7 @@
         period: state.period,
         map: TownMap.currentMap ? TownMap.currentMap() : "town",
         dungeon: dungeonRun
-          ? { living: dungeonRun.living.slice(), bossHp: dungeonRun.boss.hp, ids: dungeonRun.ids.slice() }
+          ? { living: dungeonRun.living.slice(), bossHp: dungeonRun.boss.hp, ids: dungeonRun.ids.slice(), dungeonId: dungeonRun.dungeonId }
           : null,
         party: state.party.map(function (u) {
           return {
@@ -4040,8 +4487,10 @@
             maxHp: u.maxHp,
             weapon: u.weaponId,
             uses: usesOf(u, u.weaponId),
-            dungeonLockUntil: u.dungeonLockUntil || 0,
-            lockLabel: lockoutLabel(u)
+            dungeonLockUntil: u.dungeonLockUntil || emptyDungeonTimes(),
+            dungeonFoughtUntil: u.dungeonFoughtUntil || emptyDungeonTimes(),
+            arenaFoughtUntil: u.arenaFoughtUntil || 0,
+            lockLabel: dungeonTip(u)
           };
         })
       };
@@ -4078,21 +4527,22 @@
       openPlace("town");
       return TownMap.currentMap();
     },
-    openDeploy: function () {
-      openDungeonDeploy();
+    openDeploy: function (dungeonId) {
+      openDungeonDeploy(dungeonId || "d1");
     },
-    startDungeon: function (ids) {
+    startDungeon: function (ids, dungeonId) {
+      if (dungeonId) pendingDungeonId = dungeonId;
       if (!ids) ids = state.party.map(function (u) { return u.id; });
       startDungeonRun(ids);
-      return dungeonRun && { living: dungeonRun.living.slice(), bossHp: dungeonRun.boss.hp, wave: dungeonRun.wave };
+      return dungeonRun && { living: dungeonRun.living.slice(), bossHp: dungeonRun.boss.hp, dungeonId: dungeonRun.dungeonId };
     },
-    lockoutUnit: function (classId, atMs) {
+    lockoutUnit: function (classId, atMs, dungeonId) {
       var u = unitById(classId);
       if (!u) return null;
-      lockUnit(u, atMs || Date.now());
+      lockUnit(u, atMs || Date.now(), dungeonId || "d1");
       renderHud();
       save();
-      return { classId: classId, until: u.dungeonLockUntil, label: lockoutLabel(u) };
+      return { classId: classId, until: timeAt(u, "dungeonLockUntil", dungeonId || "d1"), label: lockoutLabel(u, dungeonId || "d1") };
     },
     nextUnlockMs: nextUnlockMs,
     shanghaiParts: shanghaiParts,
@@ -4115,24 +4565,28 @@
       save();
       return drop && drop.weapon ? { weapon: weaponName(drop.weapon), unit: drop.unit && displayName(drop.unit) } : null;
     },
-    previewVictory: function (weaponId) {
+    previewVictory: function (weaponId, dungeonId) {
+      var id = dungeonId || (weaponId && String(weaponId).indexOf("copper") === 0 ? "d1" : "d2");
+      pendingDungeonId = id;
       if (!dungeonRun) {
         dungeonRun = {
           ids: state.party.map(function (u) { return u.id; }),
           living: state.party.map(function (u) { return u.id; }),
-          wave: 1,
+          dungeonId: id,
           loot: {},
-          boss: makeMonster(1, 0),
+          boss: makeMonster(id, 0),
           lastAtk: state.activeId,
           phase: "player"
         };
         dungeonRun.boss.hp = 0;
       }
-      dungeonRun.wave = 1;
+      dungeonRun.dungeonId = id;
       if (weaponId && String(weaponId).indexOf("copper") === 0) {
         if (!dungeonRun.loot) dungeonRun.loot = {};
         dungeonRun.loot.copper = grantCopperReward(dungeonRun.ids, weaponId);
-        finishDungeonWin("silver-axe");
+        finishDungeonWin();
+      } else if (id === "d1") {
+        finishDungeonWin();
       } else {
         finishDungeonWin(weaponId || "silver-axe");
       }
