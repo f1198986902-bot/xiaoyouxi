@@ -106,11 +106,11 @@
     "silver-bow": { id: "silver-bow", name: "银弓", type: "bow", mt: 13, hit: 75, wt: 6, cost: 1200 }
   };
 
-  /** 地下城第一波胜利时随机掉落的铜武器（不在商店出售）。 */
+  /** 地下城一胜利时随机掉落的铜武器（不在商店出售）。 */
   var COPPER_REWARDS = ["copper-sword", "copper-axe", "copper-lance", "copper-bow"];
-  /** 地下城第二波胜利时随机掉落的银武器（不在商店出售）。 */
+  /** 地下城二胜利时随机掉落的银武器（不在商店出售）。 */
   var SILVER_REWARDS = ["silver-sword", "silver-lance", "silver-axe", "silver-bow"];
-  /** 地下城第一只魔物每次进入时随机装备的铁级武器。 */
+  /** 地下城一的魔物每次进入时随机装备的铁级武器。 */
   var IRON_WEAPONS = ["iron-sword", "iron-lance", "iron-axe", "iron-bow"];
   /** 商店出售的铁质武器。 */
   var SHOP_WEAPONS = ["iron-sword", "iron-lance", "iron-axe", "iron-bow"];
@@ -127,7 +127,7 @@
   var ITEMS = {
     tonic: { id: "tonic", name: "休息药", cost: 80, hp: 10, desc: "恢复 10 点生命。药味苦，却能把人从边缘拉回来。" },
     promoBook: { id: "promoBook", name: "转职书", cost: 0, desc: "等级达到 10 的同伴可用来转职。转职后等级回到 1，并获得属性加成。" },
-    challengeWrit: { id: "challengeWrit", name: "挑战书", cost: 100, desc: "使用后重置本日竞技场剩余对战次数。" }
+    challengeWrit: { id: "challengeWrit", name: "挑战书", cost: 100, desc: "若当前同伴今日已在竞技场出战，使用后可再战一次。" }
   };
 
   /** 名册显示顺序：剑士、弓箭手、重甲兵、骑士、盗贼、战士 */
@@ -160,6 +160,11 @@
   var GOLD_BONUS = 0.05;
   var GUILD_GOLD_BONUS = 0.05;
   var ARENA_PRIZES = [100000, 50000, 20000];
+  var PERSONAL_PRIZE_POT = 1000000;
+  var GUILD_SPEND_RETURN = 0.9;
+  var GUILD_PRIZE_SHARES = [0.7, 0.2, 0.1];
+  /* 2026-01-01 00:00 Asia/Shanghai = 2025-12-31 16:00 UTC */
+  var SEASON_EPOCH_MS = Date.UTC(2025, 11, 31, 16, 0, 0);
   var ARENA_NPC_COUNT = 8;
   var GUILD_HUNT_POINTS = 60;
 
@@ -172,43 +177,51 @@
     fighter: ["加托", "贝恩", "卢卡", "朵拉"]
   };
 
-  /** 镇外地下城两波魔物。显示名由界面文案提供，此处仅存数值。 */
-  var DUNGEON_WAVES = [
-    {
-      id: "stonegate-monster-1",
+  /** 两座互不关联的地下城。显示名由界面文案提供，此处仅存数值。 */
+  var DUNGEONS = {
+    d1: {
+      id: "d1",
+      artId: "stonegate",
       classId: "cavalier",
       className: "骑士",
       level: 10,
-      hp: 80,
-      maxHp: 80,
+      hp: 50,
+      maxHp: 50,
       str: 12,
       skill: 7,
       spd: 10,
       luck: 7,
       def: 7,
       weaponPool: "iron",
+      reward: "copper",
       rewardGold: 0,
       rewardExp: 0
     },
-    {
-      id: "stonegate-monster-2",
+    d2: {
+      id: "d2",
+      artId: "axefiend",
       classId: "fighter",
       className: "战士",
       level: 15,
-      hp: 150,
-      maxHp: 150,
+      hp: 80,
+      maxHp: 80,
       str: 17,
       skill: 9,
       spd: 11,
       luck: 7,
       def: 8,
       weaponId: "steel-axe",
+      reward: "silver",
+      tomeChance: 50,
       rewardGold: 0,
       rewardExp: 0
     }
-  ];
-  /** 兼容旧调用：第一波魔物。 */
-  var DUNGEON_BOSS = DUNGEON_WAVES[0];
+  };
+  var DUNGEON_ORDER = ["d1", "d2"];
+  /** 兼容旧调用：按顺序排列的地下城定义。 */
+  var DUNGEON_WAVES = DUNGEON_ORDER.map(function (id) { return DUNGEONS[id]; });
+  /** 兼容旧调用：地下城一。 */
+  var DUNGEON_BOSS = DUNGEONS.d1;
 
   /** 转职加成（不含幸运/魔防/体格/移动）。 */
   var PROMOTIONS = {
@@ -333,6 +346,12 @@
     ENEMY_NAMES: ENEMY_NAMES,
     DUNGEON_BOSS: DUNGEON_BOSS,
     DUNGEON_WAVES: DUNGEON_WAVES,
+    DUNGEONS: DUNGEONS,
+    DUNGEON_ORDER: DUNGEON_ORDER,
+    PERSONAL_PRIZE_POT: PERSONAL_PRIZE_POT,
+    GUILD_SPEND_RETURN: GUILD_SPEND_RETURN,
+    GUILD_PRIZE_SHARES: GUILD_PRIZE_SHARES,
+    SEASON_EPOCH_MS: SEASON_EPOCH_MS,
     PROMOTIONS: PROMOTIONS,
     CLASS_START_IRON: CLASS_START_IRON,
     COPPER_REWARDS: COPPER_REWARDS,
