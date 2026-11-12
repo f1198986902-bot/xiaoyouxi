@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Ashlamp Town</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="game">
+    <div id="stage">
+
+      <section id="screen-title" class="screen active">
+        <div class="title-wrap">
+          <div class="lang-switch title-lang" role="group" aria-label="Language">
+            <span class="lang-label">Language</span>
+            <button type="button" class="lang-btn active" data-lang="en" aria-pressed="true">English</button>
+            <button type="button" class="lang-btn" data-lang="zh" aria-pressed="false">中文</button>
+          </div>
+          <div class="title-kicker">Border Survival</div>
+          <h1>Ashlamp Town</h1>
+          <div class="title-rule"></div>
+          <p class="title-tag">Six companions arrive at this frontier town.<br>Train, spar, or leave by the South Gate and challenge the dungeon.</p>
+          <div class="title-menu" role="menu">
+            <button type="button" class="fe-cmd" id="btn-start">New Journey</button>
+            <button type="button" class="fe-cmd" id="btn-continue" hidden>Continue Journey</button>
+          </div>
+        </div>
+      </section>
+
+
+      <section id="screen-town" class="screen">
+        <div id="map-wrap">
+          <canvas id="town-map" width="1248" height="720" aria-label="Ashlamp Town chapter map"></canvas>
+          <div id="map-labels" aria-hidden="true"></div>
+          <div id="terrain-win" class="fe-win">
+            <div class="t-name" id="terrain-name">Grass</div>
+            <div class="t-sub" id="terrain-sub">Passable</div>
+            <button type="button" class="btn btn-gold" id="btn-enter-place" hidden>Enter</button>
+          </div>
+        </div>
+        <header id="hud"></header>
+      </section>
+
+      <div id="modal" class="backdrop hidden" role="dialog" aria-modal="true"></div>
+      <div id="battle" class="backdrop hidden" role="dialog" aria-modal="true"></div>
+      <div id="toast"></div>
+    </div>
+  </div>
+
+  <script src="js/combat.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
