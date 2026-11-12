@@ -271,6 +271,17 @@
     };
   }
 
+  /** 仅当 uses 为数字且已耗尽时，该武器本击无法造成伤害。无 uses 字段的测试夹具不受影响。 */
+  function isWeaponSpent(weapon) {
+    return !!(weapon && typeof weapon.uses === "number" && weapon.uses <= 0);
+  }
+
+  function consumeWeaponUse(weapon) {
+    if (weapon && typeof weapon.uses === "number" && weapon.uses > 0) {
+      weapon.uses -= 1;
+    }
+  }
+
   /**
    * 回合顺序：先手先攻，防守方若仍存活则反击一次，
    * 然后各自若满足追击条件再追加一击。双方追击彼此独立。
@@ -302,17 +313,22 @@
         side = order[i];
         atk = side === "a" ? a : b;
         def = side === "a" ? b : a;
-        strike = resolveStrike(atk, def, rng);
-        if (untilDown && strike.damage <= 0 && a.hp + b.hp === hpBefore && i === order.length - 1 && stale >= 1) {
-          strike = {
-            result: "hit",
-            hit: true,
-            crit: false,
-            damage: 1,
-            hitRoll: strike.hitRoll,
-            critRoll: strike.critRoll,
-            threshold: strike.threshold
-          };
+        if (isWeaponSpent(atk.weapon)) {
+          strike = { result: "broke", hit: false, crit: false, damage: 0, hitRoll: -1, threshold: 0 };
+        } else {
+          strike = resolveStrike(atk, def, rng);
+          if (untilDown && strike.damage <= 0 && a.hp + b.hp === hpBefore && i === order.length - 1 && stale >= 1) {
+            strike = {
+              result: "hit",
+              hit: true,
+              crit: false,
+              damage: 1,
+              hitRoll: strike.hitRoll,
+              critRoll: strike.critRoll,
+              threshold: strike.threshold
+            };
+          }
+          consumeWeaponUse(atk.weapon);
         }
         def.hp = Math.max(0, def.hp - strike.damage);
         if (strike.damage > 0) lastHit = side;
@@ -380,6 +396,8 @@
     applyTriangle: applyTriangle,
     forecast: forecast,
     resolveStrike: resolveStrike,
-    resolveDuel: resolveDuel
+    resolveDuel: resolveDuel,
+    isWeaponSpent: isWeaponSpent,
+    consumeWeaponUse: consumeWeaponUse
   };
 });

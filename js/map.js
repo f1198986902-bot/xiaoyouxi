@@ -51,7 +51,7 @@
 
   var PLACES = [
     { id: "guild",    name: "公会",   tx: 2,  ty: 6,  tw: 5, th: 3, img: "guild",  ox: 0, oy: -32, enter: { x: 4, y: 9 } },
-    { id: "inn",      name: "银行",   tx: 14, ty: 3,  tw: 3, th: 2, img: "inn",    ox: 0, oy: -24, enter: { x: 15, y: 5 } },
+    { id: "inn",      name: "打铁铺",   tx: 14, ty: 3,  tw: 3, th: 2, img: "inn",    ox: 0, oy: -24, enter: { x: 15, y: 5 } },
     { id: "statue",   name: "雕像",   tx: 11, ty: 7,  tw: 2, th: 2, img: "statue", ox: 0, oy: -8,  enter: { x: 12, y: 9 } },
     { id: "arena",    name: "竞技场", tx: 17, ty: 6,  tw: 4, th: 3, img: "arena",  ox: 0, oy: -32, enter: { x: 18, y: 9 } },
     { id: "board",    name: "公告栏", tx: 2,  ty: 11, tw: 2, th: 2, img: "board",  ox: 0, oy: 0,   enter: { x: 3, y: 13 } },
