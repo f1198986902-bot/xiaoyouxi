@@ -18,8 +18,7 @@
       weaponType: "sword",
       startingWeapon: "wood-sword",
       blurb: "以剑见长的游侠。技术与速度出众，容易打出必杀，却也身板单薄。",
-      bases: { hp: 18, str: 5, skill: 9, spd: 8, luck: 5, def: 3 },
-      bonus: { skill: 2 },
+      bases: { hp: 18, str: 5, skill: 7, spd: 8, luck: 5, def: 3 },
       growths: { hp: 70, str: 40, skill: 60, spd: 60, luck: 55, def: 20 }
     },
     cavalier: {
@@ -29,8 +28,7 @@
       weaponType: "lance",
       startingWeapon: "wood-lance",
       blurb: "使枪的军士。力量成长优秀，攻守较为均衡，速度则稍显平庸。",
-      bases: { hp: 20, str: 7, skill: 4, spd: 6, luck: 4, def: 5 },
-      bonus: { str: 1, spd: 1 },
+      bases: { hp: 20, str: 6, skill: 4, spd: 5, luck: 4, def: 5 },
       growths: { hp: 80, str: 60, skill: 35, spd: 40, luck: 35, def: 20 }
     },
     archer: {
@@ -40,8 +38,7 @@
       weaponType: "bow",
       startingWeapon: "wood-bow",
       blurb: "擅使长弓。命中稳定，能把技术转化为可靠的输出。",
-      bases: { hp: 18, str: 5, skill: 6, spd: 7, luck: 4, def: 4 },
-      bonus: { spd: 2 },
+      bases: { hp: 18, str: 5, skill: 6, spd: 5, luck: 4, def: 4 },
       growths: { hp: 75, str: 50, skill: 50, spd: 40, luck: 40, def: 20 }
     },
     thief: {
@@ -51,8 +48,7 @@
       weaponType: "sword",
       startingWeapon: "wood-sword",
       blurb: "身手敏捷的求生者。速度极高，容易追击，但力量与守备都不足。",
-      bases: { hp: 17, str: 3, skill: 6, spd: 10, luck: 6, def: 2 },
-      bonus: { skill: 1, spd: 1 },
+      bases: { hp: 17, str: 3, skill: 5, spd: 9, luck: 6, def: 2 },
       growths: { hp: 75, str: 30, skill: 40, spd: 70, luck: 50, def: 25 }
     },
     armor: {
@@ -62,8 +58,7 @@
       weaponType: "lance",
       startingWeapon: "wood-lance",
       blurb: "身披重甲的守御者。生命与守备成长惊人，却行动迟缓，难以追击。",
-      bases: { hp: 24, str: 6, skill: 3, spd: 2, luck: 2, def: 9 },
-      bonus: { hp: 2 },
+      bases: { hp: 22, str: 6, skill: 3, spd: 2, luck: 2, def: 9 },
       growths: { hp: 90, str: 40, skill: 30, spd: 30, luck: 35, def: 55 }
     },
     fighter: {
@@ -73,8 +68,7 @@
       weaponType: "axe",
       startingWeapon: "wood-axe",
       blurb: "力大的斧手。力量与生命出众，技术稍逊，守备也并不厚实。",
-      bases: { hp: 20, str: 9, skill: 4, spd: 5, luck: 3, def: 4 },
-      bonus: { str: 2 },
+      bases: { hp: 20, str: 7, skill: 4, spd: 5, luck: 3, def: 4 },
       growths: { hp: 85, str: 55, skill: 35, spd: 40, luck: 30, def: 25 }
     }
   };
@@ -173,9 +167,9 @@
   var ARENA_WIN_POINTS = 10;
   var ARENA_SEASON_MS = 15 * 24 * 60 * 60 * 1000;
   var GUILD_LOCK_MS = 24 * 60 * 60 * 1000;
-  /* Always on: training fees and gold production are both +5%. */
-  var GOLD_BONUS = 0.05;
-  var GUILD_GOLD_BONUS = 0.05;
+  /* Unused: the former production bonus is already included in INCOME_SCALE. */
+  var GOLD_BONUS = 0;
+  var GUILD_GOLD_BONUS = 0;
   var ARENA_PRIZES = [100000, 50000, 20000];
   var PERSONAL_PRIZE_POT = 1000000;
   var GUILD_SPEND_RETURN = 0.9;
@@ -301,7 +295,7 @@
   var GOLD_TICK_MS = 10000;
   /** One income day is 24 real hours: 8,640 ticks of 10 seconds. */
   var TICKS_PER_DAY = 8640;
-  var INCOME_SCALE = 2000;
+  var INCOME_SCALE = 2100;
   var INCOME_OFFSET = 20;
   var ECONOMY_REV = 2;
 
@@ -311,7 +305,7 @@
     return x;
   }
 
-  /** 24h income at this effective level: 2000 × level / (level + 20). Cap 40 for promoted units. */
+  /** 24h income at this effective level: 2100 × level / (level + 20). Cap 40 for promoted units. */
   function dailyIncome(level) {
     var lv = level;
     if (lv < 1) lv = 1;

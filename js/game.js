@@ -574,6 +574,7 @@
       dungeonFoughtUntil: emptyDungeonTimes(),
       arenaFoughtUntil: 0,
       classBonusApplied: true,
+      classBonusRemoved: true,
       armorBonusToHp: classId === "armor"
     };
   }
@@ -630,8 +631,9 @@
     u.arenaFoughtUntil = typeof raw.arenaFoughtUntil === "number" ? raw.arenaFoughtUntil : 0;
     u.classBonusApplied = !!raw.classBonusApplied;
     u.armorBonusToHp = !!raw.armorBonusToHp;
+    u.classBonusRemoved = !!raw.classBonusRemoved;
     migrateArmorBonusToHp(u);
-    if (!u.classBonusApplied) applyClassBonusOnce(u);
+    migrateClassBonusRemoved(u);
     ensureLanceLoadout(u);
     if (!u.weaponUses[u.weaponId] && u.weaponUses[u.weaponId] !== 0) {
       u.weaponUses[u.weaponId] = D.weaponMaxUses(u.weaponId);
@@ -998,7 +1000,6 @@
     return s;
   }
   function goldBonus() {
-    return 1 + (D.GOLD_BONUS || D.GUILD_GOLD_BONUS || 0.05);
     return 1;
   }
   function unitDaily(u) {
@@ -1028,34 +1029,49 @@
   function trainFee(level) {
     return D.money(D.trainCost(level) * goldBonus());
   }
-  function classBonusLine(classId) {
-    var b = D.CLASSES[classId] && D.CLASSES[classId].bonus;
-    var parts = [], i, k;
-    if (!b) return "";
-    for (i = 0; i < STAT_KEYS.length; i++) {
-      k = STAT_KEYS[i];
-      if (b[k]) parts.push(statLabel(k) + " +" + b[k]);
+  /* Former exclusive class add-ons, used only to subtract them from existing saves. */
+  var CLASS_EXCLUSIVE_BONUSES = {
+    sword: { skill: 2 },
+    cavalier: { str: 1, spd: 1 },
+    archer: { spd: 2 },
+    thief: { skill: 1, spd: 1 },
+    armor: { hp: 2 },
+    fighter: { str: 2 }
+  };
+  function migrateClassBonusRemoved(u) {
+    var b, k, i, wasDown;
+    if (!u || u.classBonusRemoved) return;
+    if (!u.classBonusApplied) {
+      u.classBonusRemoved = true;
+      return;
     }
-    if (!parts.length) return "";
-    return t("train.bonus", { bonus: parts.join("　") });
-  }
-  function applyClassBonusOnce(u) {
-    var b, k, i;
-    if (!u || u.classBonusApplied) return;
-    b = D.CLASSES[u.classId] && D.CLASSES[u.classId].bonus;
-    if (b) {
-      for (i = 0; i < STAT_KEYS.length; i++) {
-        k = STAT_KEYS[i];
-        if (!b[k]) continue;
-        if (k === "hp") {
-          u.maxHp += b[k];
-          u.hp += b[k];
+    if (u.classId === "armor") {
+      if (u.armorBonusToHp) {
+        wasDown = u.hp <= 0;
+        u.maxHp -= 2;
+        if (u.maxHp < 1) u.maxHp = 1;
+        if (wasDown) {
+          u.hp = 0;
         } else {
-          u[k] += b[k];
+          u.hp -= 2;
+          if (u.hp < 1) u.hp = 1;
+          if (u.hp > u.maxHp) u.hp = u.maxHp;
+        }
+      } else {
+        u.def = Math.max(0, (u.def || 0) - 2);
+        u.armorBonusToHp = true;
+      }
+    } else {
+      b = CLASS_EXCLUSIVE_BONUSES[u.classId];
+      if (b) {
+        for (i = 0; i < STAT_KEYS.length; i++) {
+          k = STAT_KEYS[i];
+          if (!b[k]) continue;
+          u[k] = Math.max(0, (u[k] || 0) - b[k]);
         }
       }
     }
-    u.classBonusApplied = true;
+    u.classBonusRemoved = true;
   }
   function healPartyFull() {
     var i, u;
@@ -3204,9 +3220,8 @@
     else if (poor) note = "<p class='warn-text'>" + t("train.poor") + "</p>";
     var costLine = atCap
       ? "<p>" + t("train.atCap", { cap: levelCapOf(p) }) + "</p>"
-      : "<p>" + t("train.nextCostBonus", { lv: effectiveLevel(p), cost: formatGold(cost) }) + "</p>" +
-        "<p>" + t("train.payback", { days: formatGold(paybackDays(effectiveLevel(p))) }) + "</p>" +
-        "<p class='muted'>" + t("train.goldBonus") + "</p>";
+      : "<p>" + t("train.nextCost", { lv: effectiveLevel(p), cost: formatGold(cost) }) + "</p>" +
+        "<p>" + t("train.payback", { days: formatGold(paybackDays(effectiveLevel(p))) }) + "</p>";
     var body =
       "<p class='lead'>" + t("train.lead") + "</p>" +
       "<p>" +
@@ -3217,7 +3232,6 @@
       p.level +
       (atCap ? t("ui.cap") : "") +
       "</p>" +
-      (classBonusLine(p.classId) ? "<p>" + classBonusLine(p.classId) + "</p>" : "") +
       "<table class='stat-table'><thead><tr><th></th><th>" +
       t("train.current") +
       "</th><th>" +
@@ -3549,7 +3563,6 @@
       p.level +
       (p.level >= levelCapOf(p) ? t("ui.cap") : "　" + t("stats.exp") + " " + p.exp + "/" + D.EXP_PER_LEVEL) +
       "</p>" +
-      (classBonusLine(p.classId) ? "<p>" + classBonusLine(p.classId) + "</p>" : "") +
       "<table class='stat-table'><thead><tr><th></th><th>" +
       t("train.current") +
       "</th><th>" +
