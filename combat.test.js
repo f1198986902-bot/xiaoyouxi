@@ -113,6 +113,48 @@ test("必杀回避 = 幸运；必杀率 = floor(技术/2) - 对方必杀回避�
   // 高技术也不会低于 0 或超过 100
   assert.strictEqual(C.critRate(0, 10), 0);
   assert.strictEqual(C.critRate(80, 0), 40);
+  // 省略或为 0 的武器必杀不改变结果
+  assert.strictEqual(C.critRate(10, 2, 0), 3);
+  assert.strictEqual(C.critRate(10, 2, undefined), 3);
+});
+
+test("武器必杀会加进必杀率，结果仍夹取到 0–100", function () {
+  // floor(10/2)=5，再 +30，减去对方必杀回避 2 → 33
+  assert.strictEqual(C.critRate(10, 2, 30), 33);
+  // 相对无武器必杀的 3，正好提高 30
+  assert.strictEqual(C.critRate(10, 2, 30) - C.critRate(10, 2, 0), 30);
+  // floor(7/2)=3，+30 - 5 = 28
+  assert.strictEqual(C.critRate(7, 5, 30), 28);
+  // 上夹：floor(80/2)+80 - 0 = 120 → 100
+  assert.strictEqual(C.critRate(80, 0, 80), 100);
+  // 下夹：floor(0/2)+0 - 10 = -10 → 0
+  assert.strictEqual(C.critRate(0, 10, 0), 0);
+
+  var striker = {
+    name: "甲",
+    hp: 20, maxHp: 20, str: 8, skill: 10, spd: 6, luck: 4, def: 4,
+    weapon: { name: "必杀剑", mt: 9, hit: 75, wt: 7, crit: 30 }
+  };
+  var foe = {
+    name: "乙",
+    hp: 20, maxHp: 20, str: 6, skill: 4, spd: 5, luck: 2, def: 5,
+    weapon: { name: "铁枪", mt: 7, hit: 80, wt: 8 }
+  };
+  // 必杀：floor(10/2)+30-2=33。无武器必杀时为 3
+  var f = C.forecast(striker, foe);
+  assert.strictEqual(f.a.crit, 33);
+  var plain = {
+    name: "甲",
+    hp: 20, maxHp: 20, str: 8, skill: 10, spd: 6, luck: 4, def: 4,
+    weapon: { name: "铁剑", mt: 5, hit: 90, wt: 5 }
+  };
+  assert.strictEqual(C.forecast(plain, foe).a.crit, 3);
+
+  // 结算同样使用武器必杀：命中骰 0，必杀骰 10（10 < 33 为必杀；若无 +30 则 10 < 3 不暴）
+  var r = C.resolveStrike(C.snapshot(striker), C.snapshot(foe), rngFrom([0, 10]));
+  assert.strictEqual(r.result, "crit");
+  var missCrit = C.resolveStrike(C.snapshot(plain), C.snapshot(foe), rngFrom([0, 10]));
+  assert.strictEqual(missCrit.result, "hit");
 });
 
 test("成长判定边界：roll < 成长率才加一；70 时 69 成功、70 失败", function () {

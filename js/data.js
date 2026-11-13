@@ -103,7 +103,11 @@
     "silver-sword": { id: "silver-sword", name: "银剑", type: "sword", mt: 13, hit: 80, wt: 8, cost: 1200 },
     "silver-lance": { id: "silver-lance", name: "银枪", type: "lance", mt: 14, hit: 75, wt: 10, cost: 1200 },
     "silver-axe": { id: "silver-axe", name: "银斧", type: "axe", mt: 15, hit: 70, wt: 12, cost: 1000 },
-    "silver-bow": { id: "silver-bow", name: "银弓", type: "bow", mt: 13, hit: 75, wt: 6, cost: 1200 }
+    "silver-bow": { id: "silver-bow", name: "银弓", type: "bow", mt: 13, hit: 75, wt: 6, cost: 1200 },
+    "killer-sword": { id: "killer-sword", name: "必杀剑", type: "sword", mt: 9, hit: 75, crit: 30, wt: 7, uses: 20, cost: 1300, promotedOnly: true },
+    "killer-lance": { id: "killer-lance", name: "必杀枪", type: "lance", mt: 10, hit: 70, crit: 30, wt: 9, uses: 20, cost: 1200, promotedOnly: true },
+    "killer-axe": { id: "killer-axe", name: "必杀斧", type: "axe", mt: 11, hit: 65, crit: 30, wt: 11, uses: 20, cost: 1000, promotedOnly: true },
+    "killer-bow": { id: "killer-bow", name: "必杀弓", type: "bow", mt: 9, hit: 75, crit: 30, wt: 7, uses: 20, cost: 1400, promotedOnly: true }
   };
 
   /** 地下城一胜利时随机掉落的铜武器（不在商店出售）。 */
@@ -112,8 +116,10 @@
   var SILVER_REWARDS = ["silver-sword", "silver-lance", "silver-axe", "silver-bow"];
   /** 地下城一的魔物每次进入时随机装备的铁级武器。 */
   var IRON_WEAPONS = ["iron-sword", "iron-lance", "iron-axe", "iron-bow"];
-  /** 商店出售的铁质武器。 */
-  var SHOP_WEAPONS = ["iron-sword", "iron-lance", "iron-axe", "iron-bow"];
+  /** 商店出售的铁质武器，以及仅上位职业可用的必杀兵器。 */
+  var SHOP_WEAPONS = ["iron-sword", "iron-lance", "iron-axe", "iron-bow", "killer-sword", "killer-lance", "killer-axe", "killer-bow"];
+  /** 地下城三胜利时随机掉落的必杀兵器。 */
+  var KILLER_REWARDS = ["killer-sword", "killer-lance", "killer-axe", "killer-bow"];
 
   var WEAPON_ORDER = [
     "iron-sword", "steel-sword", "slim-sword",
@@ -126,7 +132,7 @@
 
   var ITEMS = {
     tonic: { id: "tonic", name: "休息药", cost: 80, hp: 10, desc: "恢复 10 点生命。药味苦，却能把人从边缘拉回来。" },
-    promoBook: { id: "promoBook", name: "转职书", cost: 500, desc: "等级达到 10 的下位职业可转职为上位职业。转职后等级变为 21，属性提升，金币产出也随之提高。" },
+    promoBook: { id: "promoBook", name: "转职书", cost: 500, desc: "等级达到 20 的下位职业可转职为上位职业。转职后等级变为 21，属性提升，金币产出也随之提高。" },
     challengeWrit: { id: "challengeWrit", name: "挑战书", cost: 100, desc: "若当前同伴今日已在竞技场出战，使用后可再战一次。" }
   };
 
@@ -177,7 +183,7 @@
     fighter: ["加托", "贝恩", "卢卡", "朵拉"]
   };
 
-  /** 两座互不关联的地下城。显示名由界面文案提供，此处仅存数值。 */
+  /** 三座互不关联的地下城。显示名由界面文案提供，此处仅存数值。 */
   var DUNGEONS = {
     d1: {
       id: "d1",
@@ -185,13 +191,13 @@
       classId: "cavalier",
       className: "骑士",
       level: 10,
-      hp: 50,
-      maxHp: 50,
-      str: 12,
-      skill: 7,
-      spd: 10,
-      luck: 7,
-      def: 7,
+      hp: 43,
+      maxHp: 43,
+      str: 10,
+      skill: 6,
+      spd: 9,
+      luck: 6,
+      def: 6,
       weaponPool: "iron",
       reward: "copper",
       rewardGold: 0,
@@ -215,9 +221,27 @@
       tomeChance: 50,
       rewardGold: 0,
       rewardExp: 0
+    },
+    d3: {
+      id: "d3",
+      artId: "ashgate",
+      classId: "cavalier",
+      className: "骑士",
+      level: 10,
+      hp: 50,
+      maxHp: 50,
+      str: 12,
+      skill: 7,
+      spd: 10,
+      luck: 7,
+      def: 7,
+      weaponPool: "iron",
+      reward: "killer",
+      rewardGold: 0,
+      rewardExp: 0
     }
   };
-  var DUNGEON_ORDER = ["d1", "d2"];
+  var DUNGEON_ORDER = ["d1", "d2", "d3"];
   /** 兼容旧调用：按顺序排列的地下城定义。 */
   var DUNGEON_WAVES = DUNGEON_ORDER.map(function (id) { return DUNGEONS[id]; });
   /** 兼容旧调用：地下城一。 */
@@ -255,6 +279,7 @@
   /** No gold cap. Test builds start with a large purse. */
   var GOLD_CAP = 0;
   var START_GOLD = 999999;
+  var PROMO_MIN_LEVEL = 20;
   var LEVEL_CAP = 20;
   var EFFECTIVE_LEVEL_CAP = 40;
   var EXP_PER_LEVEL = 100;
@@ -284,6 +309,11 @@
 
   function weaponMaxUses(id) {
     if (!id || typeof id !== "string") return 0;
+    var w = WEAPONS[id];
+    if (w) {
+      if (typeof w.uses === "number" && isFinite(w.uses)) return Math.max(0, Math.floor(w.uses));
+      if (typeof w.maxUses === "number" && isFinite(w.maxUses)) return Math.max(0, Math.floor(w.maxUses));
+    }
     if (id.indexOf("wood-") === 0) return 40;
     if (id.indexOf("copper-") === 0) return 25;
     if (id.indexOf("silver-") === 0) return 20;
@@ -318,10 +348,12 @@
       type: w.type,
       mt: w.mt,
       hit: w.hit,
+      crit: w.crit || 0,
       wt: w.wt,
       cost: w.cost,
       uses: uses,
-      maxUses: max
+      maxUses: max,
+      promotedOnly: !!w.promotedOnly
     };
   }
 
@@ -358,6 +390,7 @@
     SILVER_REWARDS: SILVER_REWARDS,
     IRON_WEAPONS: IRON_WEAPONS,
     SHOP_WEAPONS: SHOP_WEAPONS,
+    KILLER_REWARDS: KILLER_REWARDS,
     STATUE_LORE: STATUE_LORE,
     PERIODS: PERIODS,
     PARTY_ORDER: PARTY_ORDER,
@@ -373,6 +406,7 @@
     dailyIncome: dailyIncome,
     tickIncome: tickIncome,
     trainCost: trainCost,
+    PROMO_MIN_LEVEL: PROMO_MIN_LEVEL,
     LEVEL_CAP: LEVEL_CAP,
     EFFECTIVE_LEVEL_CAP: EFFECTIVE_LEVEL_CAP,
     EXP_PER_LEVEL: EXP_PER_LEVEL,

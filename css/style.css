@@ -2130,11 +2130,11 @@ html[lang="en"] .title-tag {
 }
 .dungeon-pick {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 0.7em;
   margin: 0.4em 0 0.8em;
 }
-@media (max-width: 640px) {
+@media (max-width: 800px) {
   .dungeon-pick { grid-template-columns: 1fr; }
 }
 .dungeon-pick-card .btn { margin-top: 0.2em; }
