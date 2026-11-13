@@ -125,6 +125,8 @@
   var D3_REWARDS = KILLER_REWARDS.concat(SLAYER_REWARDS);
   /** 地下城二转职书掉落百分率（掷 0–99，小于该值则获得）。 */
   var TOME_DROP_CHANCE = 20;
+  /** 主动挑战竞技场并获胜时，地下城挑战重置券掉落百分率（掷 0–99，小于该值则获得）。 */
+  var ARENA_DUNGEON_RESET_CHANCE = 3;
 
   var WEAPON_ORDER = [
     "iron-sword", "steel-sword", "slim-sword",
@@ -138,7 +140,8 @@
   var ITEMS = {
     tonic: { id: "tonic", name: "休息药", cost: 80, hp: 10, desc: "恢复 10 点生命。药味苦，却能把人从边缘拉回来。" },
     promoBook: { id: "promoBook", name: "转职书", cost: 500, desc: "等级达到 20 的下位职业可转职为上位职业。转职后等级变为 21，属性提升，金币产出也随之提高。" },
-    challengeWrit: { id: "challengeWrit", name: "挑战书", cost: 100, desc: "若当前同伴今日已在竞技场出战，使用后可再战一次。" }
+    challengeWrit: { id: "challengeWrit", name: "挑战书", cost: 100, desc: "若当前同伴今日已在竞技场出战，使用后可再战一次。" },
+    dungeonReset: { id: "dungeonReset", name: "地下城挑战重置券", desc: "若当前同伴今日已有地下城出战或阵亡限制，使用后可再次挑战全部三座地下城。" }
   };
 
   /** 名册显示顺序：剑士、弓箭手、重甲兵、骑士、盗贼、战士 */
@@ -402,6 +405,7 @@
     SLAYER_REWARDS: SLAYER_REWARDS,
     D3_REWARDS: D3_REWARDS,
     TOME_DROP_CHANCE: TOME_DROP_CHANCE,
+    ARENA_DUNGEON_RESET_CHANCE: ARENA_DUNGEON_RESET_CHANCE,
     STATUE_LORE: STATUE_LORE,
     PERIODS: PERIODS,
     PARTY_ORDER: PARTY_ORDER,
