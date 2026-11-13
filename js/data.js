@@ -62,8 +62,8 @@
       weaponType: "lance",
       startingWeapon: "wood-lance",
       blurb: "身披重甲的守御者。生命与守备成长惊人，却行动迟缓，难以追击。",
-      bases: { hp: 22, str: 6, skill: 3, spd: 2, luck: 2, def: 11 },
-      bonus: { def: 2 },
+      bases: { hp: 24, str: 6, skill: 3, spd: 2, luck: 2, def: 9 },
+      bonus: { hp: 2 },
       growths: { hp: 90, str: 40, skill: 30, spd: 30, luck: 35, def: 55 }
     },
     fighter: {
@@ -281,6 +281,8 @@
   var START_GOLD = 999999;
   var PROMO_MIN_LEVEL = 20;
   var LEVEL_CAP = 20;
+  /** 竞技、训练、公会委托与地下城探索的交锋上限；超过则先手判定失败。 */
+  var BATTLE_MAX_ROUNDS = 15;
   var EFFECTIVE_LEVEL_CAP = 40;
   var EXP_PER_LEVEL = 100;
   var REPAIR_COST = 5;
@@ -408,6 +410,7 @@
     trainCost: trainCost,
     PROMO_MIN_LEVEL: PROMO_MIN_LEVEL,
     LEVEL_CAP: LEVEL_CAP,
+    BATTLE_MAX_ROUNDS: BATTLE_MAX_ROUNDS,
     EFFECTIVE_LEVEL_CAP: EFFECTIVE_LEVEL_CAP,
     EXP_PER_LEVEL: EXP_PER_LEVEL,
     REPAIR_COST: REPAIR_COST,

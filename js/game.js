@@ -298,11 +298,12 @@
     setView("dungeon-win");
   }
   function renderDungeonWipe() {
+    var timedOut = dungeonEndReason === "timeout";
     openModal(
       panel(
-        t("dungeon.wipeTitle"),
+        t(timedOut ? "dungeon.timeoutTitle" : "dungeon.wipeTitle"),
         "<p>" +
-          t("dungeon.wipeLead") +
+          t(timedOut ? "dungeon.timeoutLead" : "dungeon.wipeLead") +
           "</p>" +
           actions({ "dungeon-close": t("dungeon.backOut") }),
         "narrow"
@@ -331,6 +332,7 @@
   var incomePauseAt = 0;
   var goldPopTimer = 0;
   var dungeonRun = null;
+  var dungeonEndReason = null;
   var pendingDungeonId = "d1";
   var personalBoardBack = "arena";
   var personalBoardRemote = { rows: [], ok: false };
@@ -554,8 +556,27 @@
       dungeonLockUntil: emptyDungeonTimes(),
       dungeonFoughtUntil: emptyDungeonTimes(),
       arenaFoughtUntil: 0,
-      classBonusApplied: true
+      classBonusApplied: true,
+      armorBonusToHp: classId === "armor"
     };
+  }
+
+  function migrateArmorBonusToHp(u) {
+    if (!u || u.classId !== "armor" || u.armorBonusToHp) return;
+    var already = !!u.classBonusApplied;
+    var wasDown = u.hp <= 0;
+    u.def = Math.max(0, (u.def || 0) - 2);
+    if (already) {
+      u.maxHp += 2;
+      if (wasDown) {
+        u.hp = 0;
+      } else {
+        u.hp += 2;
+        if (u.hp > u.maxHp) u.hp = u.maxHp;
+        if (u.hp < 1) u.hp = 1;
+      }
+    }
+    u.armorBonusToHp = true;
   }
 
   function unitFromSave(raw, fallbackId) {
@@ -591,6 +612,8 @@
     u.dungeonFoughtUntil = migrateDungeonTimes(raw.dungeonFoughtUntil);
     u.arenaFoughtUntil = typeof raw.arenaFoughtUntil === "number" ? raw.arenaFoughtUntil : 0;
     u.classBonusApplied = !!raw.classBonusApplied;
+    u.armorBonusToHp = !!raw.armorBonusToHp;
+    migrateArmorBonusToHp(u);
     if (!u.classBonusApplied) applyClassBonusOnce(u);
     ensureLanceLoadout(u);
     if (!u.weaponUses[u.weaponId] && u.weaponUses[u.weaponId] !== 0) {
@@ -2209,6 +2232,7 @@
     var dungeonId = pendingDungeonId || "d1";
     var def = dungeonDef(dungeonId);
     var weaponId = def.weaponPool === "iron" ? randomIronWeaponId() : def.weaponId;
+    dungeonEndReason = null;
     dungeonRun = {
       ids: ids.slice(),
       living: ids.slice(),
@@ -2216,7 +2240,9 @@
       boss: makeMonster(dungeonId, null, weaponId),
       loot: {},
       lastAtk: null,
-      phase: "player"
+      phase: "player",
+      exchanges: 0,
+      timedOut: false
     };
     renderDungeonRoom();
   }
@@ -2231,12 +2257,25 @@
     return out;
   }
 
+  function dungeonBattleMaxRounds() {
+    return D.BATTLE_MAX_ROUNDS || 15;
+  }
+
+  function dungeonExchangeLimitReached() {
+    return !!(dungeonRun && (dungeonRun.exchanges || 0) >= dungeonBattleMaxRounds());
+  }
+
   function renderDungeonRoom() {
     if (!dungeonRun) return;
     var living = dungeonLivingUnits();
     dungeonRun.living = living.map(function (u) { return u.id; });
     if (dungeonRun.boss.hp <= 0) {
       finishDungeonWin();
+      return;
+    }
+    if (dungeonExchangeLimitReached()) {
+      dungeonRun.timedOut = true;
+      finishDungeonWipe();
       return;
     }
     if (!living.length) {
@@ -2306,6 +2345,11 @@
   function beginDungeonAttack(id) {
     var u = unitById(id);
     if (!dungeonRun || !u || !canDungeonFight(u, Date.now(), dungeonRun.dungeonId)) return;
+    if (dungeonExchangeLimitReached()) {
+      dungeonRun.timedOut = true;
+      finishDungeonWipe();
+      return;
+    }
     if (!assertUsableWeapon(u)) return;
     setActive(u.id);
     dungeonRun.lastAtk = u.id;
@@ -2324,6 +2368,11 @@
     var living = dungeonLivingUnits();
     if (!dungeonRun || !living.length || dungeonRun.boss.hp <= 0) {
       renderDungeonRoom();
+      return;
+    }
+    if (dungeonExchangeLimitReached()) {
+      dungeonRun.timedOut = true;
+      finishDungeonWipe();
       return;
     }
     var target = unitById(dungeonRun.lastAtk);
@@ -2357,6 +2406,7 @@
     }
     syncUsesFromFighter(unit, ctx.playerIsA ? ctx.atk : ctx.def);
     if (ctx.playerIsA) markDungeonFought(unit);
+    dungeonRun.exchanges = (dungeonRun.exchanges || 0) + 1;
     var unitDead = unit.hp <= 0;
     if (unitDead) {
       lockUnit(unit);
@@ -2364,7 +2414,9 @@
         dungeonRun.living = dungeonRun.living.filter(function (id) { return id !== unit.id; });
       }
     }
-    return { unitDead: unitDead, bossDead: boss.hp <= 0, unit: unit, boss: boss };
+    var timeout = dungeonExchangeLimitReached() && boss.hp > 0;
+    if (timeout) dungeonRun.timedOut = true;
+    return { unitDead: unitDead, bossDead: boss.hp <= 0, timeout: timeout, unit: unit, boss: boss };
   }
 
   function showDungeonRoundResult(ctx, result) {
@@ -2378,6 +2430,10 @@
       title = t("dungeon.roundWin");
       note = t("dungeon.roundWinNote");
       next = "dungeon-win";
+    } else if (info.timeout) {
+      title = t("dungeon.timeout");
+      note = t("dungeon.timeoutNote");
+      next = "dungeon-wipe";
     } else if (info.unitDead && dungeonLivingUnits().length === 0) {
       title = t("dungeon.wipe");
       note = t("dungeon.wipeNote", { name: displayName(info.unit) });
@@ -2486,6 +2542,7 @@
   }
 
   function finishDungeonWipe() {
+    dungeonEndReason = dungeonRun && dungeonRun.timedOut ? "timeout" : "wipe";
     dungeonRun = null;
     closeBattle();
     renderHud();
@@ -3421,7 +3478,7 @@
     ctx.preHp = p.hp;
     ctx.preMax = p.maxHp;
     var result = C.resolveDuel(ctx.atk, ctx.def, rng(), {
-      maxRounds: ctx.kind === "dungeon" ? 1 : 20,
+      maxRounds: ctx.kind === "dungeon" ? 1 : dungeonBattleMaxRounds(),
       untilDown: ctx.kind === "arena" || ctx.kind === "guild"
     });
     ctx.result = result;
@@ -3907,6 +3964,7 @@
     syncUsesFromFighter(p, ctx.atk);
     var win = result.winner === "a";
     var lost = result.aHp <= 0;
+    var timeout = !!result.timeout && !win;
     var expGain = 0;
     var goldGain = 0;
     var note = "";
@@ -3915,8 +3973,10 @@
     if (ctx.kind === "train") {
       var hpGain = p.maxHp - ctx.preMax;
       p.hp = Math.min(p.maxHp, ctx.preHp + hpGain);
-      expGain = lost ? Math.round(ctx.exp * 0.7) : ctx.exp;
-      note = win
+      expGain = lost || timeout ? Math.round(ctx.exp * 0.7) : ctx.exp;
+      note = timeout
+        ? t("battle.timeout")
+        : win
         ? t("train.win")
         : lost
         ? t("train.lose")
@@ -3935,7 +3995,7 @@
         });
       } else {
         if (p.hp < 1) p.hp = 0;
-        note = t("arena.lose");
+        note = timeout ? t("battle.timeout") : t("arena.lose");
         rewardLine = "";
       }
     } else if (ctx.kind === "guild") {
@@ -3947,7 +4007,7 @@
         rewardLine = t("quest.doneReward", { points: pts });
       } else {
         if (p.hp < 1) p.hp = 0;
-        note = t("guild.lose");
+        note = timeout ? t("battle.timeout") : t("guild.lose");
         rewardLine = "";
       }
     }

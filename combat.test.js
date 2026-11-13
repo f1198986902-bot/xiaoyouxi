@@ -4,6 +4,7 @@
 "use strict";
 
 const C = require("./js/combat.js");
+const D = require("./js/data.js");
 const assert = require("assert");
 
 let passed = 0;
@@ -644,6 +645,93 @@ test("有 uses 时每挥一次消耗 1 点；耗尽后无法再造成伤害", fu
   assert.ok(secondA);
   assert.strictEqual(secondA.result, "broke");
   assert.strictEqual(secondA.damage, 0);
+});
+
+function wallUnit(name) {
+  return {
+    name: name,
+    hp: 20,
+    maxHp: 20,
+    str: 0,
+    skill: 20,
+    spd: 0,
+    luck: 0,
+    def: 20,
+    weapon: { name: "x", mt: 0, hit: 100, wt: 0 }
+  };
+}
+
+function rngConst(v) {
+  return {
+    int: function () {
+      return v;
+    }
+  };
+}
+
+test("重甲兵专属加成为生命 +2，基础值已计入", function () {
+  assert.deepStrictEqual(D.CLASSES.armor.bonus, { hp: 2 });
+  assert.deepStrictEqual(D.CLASSES.armor.bases, {
+    hp: 24,
+    str: 6,
+    skill: 3,
+    spd: 2,
+    luck: 2,
+    def: 9
+  });
+  assert.strictEqual(D.BATTLE_MAX_ROUNDS, 15);
+  assert.strictEqual(C.BATTLE_MAX_ROUNDS, 15);
+});
+
+test("untilDown 在 15 回合双方仍存活时先手判定失败", function () {
+  var a = wallUnit("甲");
+  var b = wallUnit("乙");
+  var r = C.resolveDuel(a, b, rngConst(0), { untilDown: true, maxRounds: 15 });
+  assert.strictEqual(r.timeout, true);
+  assert.strictEqual(r.winner, "b");
+  assert.ok(r.aHp > 0);
+  assert.ok(r.bHp > 0);
+  assert.strictEqual(r.aHp, 20);
+  assert.strictEqual(r.bHp, 20);
+  var rounds = r.log.map(function (ev) { return ev.round; });
+  assert.strictEqual(Math.max.apply(null, rounds), 14);
+  assert.strictEqual(r.log.filter(function (ev) { return ev.round === 14; }).length > 0, true);
+  assert.strictEqual(r.log.some(function (ev) { return ev.round === 15; }), false);
+  assert.strictEqual(r.log.length, 30);
+});
+
+test("15 回合内击倒仍算先手获胜", function () {
+  var a = {
+    name: "旅人",
+    hp: 18, maxHp: 18, str: 5, skill: 7, spd: 8, luck: 5, def: 3,
+    weapon: { name: "铁剑", mt: 5, hit: 90, wt: 5 }
+  };
+  var dummy = {
+    name: "木人",
+    hp: 14, maxHp: 14, str: 2, skill: 2, spd: 1, luck: 0, def: 1,
+    weapon: { name: "木臂", mt: 1, hit: 60, wt: 4 }
+  };
+  var r = C.resolveDuel(a, dummy, rngFrom([0, 99, 99, 0, 99]), { untilDown: true, maxRounds: 15 });
+  assert.strictEqual(r.winner, "a");
+  assert.strictEqual(r.timeout, false);
+  assert.strictEqual(r.bHp, 0);
+  assert.ok(r.aHp > 0);
+  assert.ok(r.log.length < 30);
+  assert.strictEqual(r.log.some(function (ev) { return ev.round >= 15; }), false);
+});
+
+test("省略 opts 时仍默认只打 1 回合，双方存活为平局", function () {
+  var a = wallUnit("甲");
+  var b = wallUnit("乙");
+  var r = C.resolveDuel(a, b, rngConst(0));
+  assert.strictEqual(r.log.length, 2);
+  assert.strictEqual(r.log[0].round, 0);
+  assert.strictEqual(r.log[1].round, 0);
+  assert.strictEqual(r.log.some(function (ev) { return ev.round === 1; }), false);
+  assert.strictEqual(r.winner, "draw");
+  assert.strictEqual(r.timeout, false);
+  assert.strictEqual(r.aHp, 20);
+  assert.strictEqual(r.bHp, 20);
 });
 
 console.log(results.join("\n"));

@@ -282,13 +282,18 @@
     }
   }
 
+  /** 对打与地下城探索的交锋上限。超过仍双方存活时，先手（甲）判定失败。 */
+  var BATTLE_MAX_ROUNDS = 15;
+
   /**
    * 回合顺序：先手先攻，防守方若仍存活则反击一次，
    * 然后各自若满足追击条件再追加一击。双方追击彼此独立。
    * 任一战斗者 HP 归零即停止。双方在展示对打中均可反击。
    *
    * 默认只进行 1 个交锋回合（便于单测）。游戏内传入
-   * opts.maxRounds（如 20）以持续对打直到一方倒下。
+   * opts.maxRounds（通常为 BATTLE_MAX_ROUNDS）以持续对打。
+   * 竞技与公会委托可设 opts.untilDown，但仍最多进行 BATTLE_MAX_ROUNDS 回合；
+   * 若回合用尽且双方仍存活，先手判定失败（timeout）。
    */
   function resolveDuel(unitA, unitB, rng, opts) {
     var a = applyTriangle(snapshot(unitA), snapshot(unitB));
@@ -296,14 +301,12 @@
     var log = [];
     var untilDown = !!(opts && opts.untilDown);
     var maxRounds = opts && opts.maxRounds != null ? opts.maxRounds : 1;
-    var round, i, order, side, atk, def, strike, hpBefore, stale, lastHit;
-    if (untilDown && maxRounds < 200) maxRounds = 200;
+    var round, i, order, side, atk, def, strike, lastHit, winner, timeout;
 
-    stale = 0;
     lastHit = "a";
+    timeout = false;
     for (round = 0; round < maxRounds; round++) {
       if (a.hp <= 0 || b.hp <= 0) break;
-      hpBefore = a.hp + b.hp;
       order = ["a", "b"];
       if (hasFollowUp(a.as, b.as)) order.push("a");
       if (hasFollowUp(b.as, a.as)) order.push("b");
@@ -317,17 +320,6 @@
           strike = { result: "broke", hit: false, crit: false, damage: 0, hitRoll: -1, threshold: 0 };
         } else {
           strike = resolveStrike(atk, def, rng);
-          if (untilDown && strike.damage <= 0 && a.hp + b.hp === hpBefore && i === order.length - 1 && stale >= 1) {
-            strike = {
-              result: "hit",
-              hit: true,
-              crit: false,
-              damage: 1,
-              hitRoll: strike.hitRoll,
-              critRoll: strike.critRoll,
-              threshold: strike.threshold
-            };
-          }
           consumeWeaponUse(atk.weapon);
         }
         def.hp = Math.max(0, def.hp - strike.damage);
@@ -349,23 +341,23 @@
         });
       }
       if (a.hp <= 0 || b.hp <= 0) break;
-      if (a.hp + b.hp === hpBefore) {
-        stale += 1;
-        if (!untilDown && stale >= 2) break;
-      } else {
-        stale = 0;
-      }
     }
 
-    var winner = null;
+    winner = null;
     if (a.hp <= 0 && b.hp <= 0) winner = untilDown ? lastHit : "draw";
     else if (b.hp <= 0) winner = "a";
     else if (a.hp <= 0) winner = "b";
-    else winner = "draw";
+    else if (untilDown || maxRounds >= BATTLE_MAX_ROUNDS) {
+      winner = "b";
+      timeout = true;
+    } else {
+      winner = "draw";
+    }
 
     return {
       log: log,
       winner: winner,
+      timeout: timeout,
       aHp: a.hp,
       bHp: b.hp,
       aMax: a.maxHp,
@@ -396,6 +388,7 @@
     applyTriangle: applyTriangle,
     forecast: forecast,
     resolveStrike: resolveStrike,
+    BATTLE_MAX_ROUNDS: BATTLE_MAX_ROUNDS,
     resolveDuel: resolveDuel,
     isWeaponSpent: isWeaponSpent,
     consumeWeaponUse: consumeWeaponUse
