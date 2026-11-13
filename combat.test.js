@@ -734,5 +734,105 @@ test("省略 opts 时仍默认只打 1 回合，双方存活为平局", function
   assert.strictEqual(r.bHp, 20);
 });
 
+
+test("特效兵器：仅对 effectiveVs 中的 classId 将威力乘 3，再加力量与三角", function () {
+  var slayer = {
+    name: "甲",
+    classId: "sword",
+    hp: 30,
+    maxHp: 30,
+    str: 5,
+    skill: 10,
+    spd: 0,
+    luck: 0,
+    def: 4,
+    weapon: { name: "破甲剑", type: "sword", mt: 8, hit: 80, wt: 11, effectiveVs: ["armor"] }
+  };
+  var armor = {
+    name: "乙",
+    classId: "armor",
+    hp: 30,
+    maxHp: 30,
+    str: 6,
+    skill: 3,
+    spd: 0,
+    luck: 0,
+    def: 9,
+    weapon: { name: "铁枪", type: "lance", mt: 7, hit: 80, wt: 8 }
+  };
+  var fighter = {
+    name: "丙",
+    classId: "fighter",
+    hp: 30,
+    maxHp: 30,
+    str: 9,
+    skill: 4,
+    spd: 0,
+    luck: 0,
+    def: 4,
+    weapon: { name: "铁斧", type: "axe", mt: 6, hit: 75, wt: 7 }
+  };
+  // 对重甲：威力 8×3=24，剑对枪被克制 −1，攻击力 5+24-1=28，伤害 28-9=19
+  var vsArmor = C.forecast(slayer, armor);
+  assert.strictEqual(C.isEffectiveVs(slayer.weapon, "armor"), true);
+  assert.strictEqual(C.weaponMtOf(slayer.weapon, "armor"), 24);
+  assert.strictEqual(vsArmor.a.atk, 28);
+  assert.strictEqual(vsArmor.a.damage, 19);
+  assert.strictEqual(vsArmor.a.triangle.side, "dis");
+
+  // 对战士：不特效，剑克斧 +1，攻击力 5+8+1=14，伤害 14-4=10（与无 effectiveVs 时相同）
+  var vsFighter = C.forecast(slayer, fighter);
+  assert.strictEqual(C.isEffectiveVs(slayer.weapon, "fighter"), false);
+  assert.strictEqual(C.weaponMtOf(slayer.weapon, "fighter"), 8);
+  assert.strictEqual(vsFighter.a.atk, 14);
+  assert.strictEqual(vsFighter.a.damage, 10);
+
+  var plain = {
+    name: "甲",
+    classId: "sword",
+    hp: 30, maxHp: 30, str: 5, skill: 10, spd: 0, luck: 0, def: 4,
+    weapon: { name: "铁剑", type: "sword", mt: 8, hit: 80, wt: 11 }
+  };
+  var plainVsFighter = C.forecast(plain, fighter);
+  assert.strictEqual(plainVsFighter.a.atk, vsFighter.a.atk);
+  assert.strictEqual(plainVsFighter.a.damage, vsFighter.a.damage);
+
+  // 已转职仍使用同一 classId，特效仍然生效
+  var general = {
+    name: "将军",
+    classId: "armor",
+    className: "将军",
+    promoted: true,
+    hp: 30, maxHp: 30, str: 6, skill: 3, spd: 0, luck: 0, def: 9,
+    weapon: { name: "铁枪", type: "lance", mt: 7, hit: 80, wt: 8 }
+  };
+  var vsPromo = C.forecast(slayer, general);
+  assert.strictEqual(vsPromo.a.atk, 28);
+  assert.strictEqual(vsPromo.a.damage, 19);
+
+  // 预告与实击一致：命中骰 0，必杀骰 99
+  var r = C.resolveDuel(slayer, armor, rngFrom([0, 99, 0, 99]));
+  assert.strictEqual(r.log[0].damage, 19);
+  var r2 = C.resolveStrike(C.applyTriangle(C.snapshot(slayer), C.snapshot(armor)), C.snapshot(armor), rngFrom([0, 99]));
+  assert.strictEqual(r2.damage, 19);
+});
+
+test("copyWeapon 带上 effectiveVs 与明示耐久；地下城二转职书掉率为 20%", function () {
+  var w = D.copyWeapon("slayer-armor");
+  assert.ok(w);
+  assert.deepStrictEqual(w.effectiveVs, ["armor"]);
+  assert.strictEqual(w.uses, 18);
+  assert.strictEqual(w.maxUses, 18);
+  assert.strictEqual(D.weaponMaxUses("slayer-armor"), 18);
+  assert.strictEqual(D.weaponMaxUses("slayer-armor-lance"), 16);
+  assert.strictEqual(D.TOME_DROP_CHANCE, 20);
+  assert.ok(D.SLAYER_REWARDS.indexOf("slayer-armor") !== -1);
+  assert.ok(D.D3_REWARDS.indexOf("killer-sword") !== -1);
+  assert.ok(D.D3_REWARDS.indexOf("slayer-axe") !== -1);
+  assert.ok(D.SHOP_WEAPONS.indexOf("slayer-armor") === -1);
+  var iron = D.copyWeapon("iron-sword");
+  assert.strictEqual(iron.effectiveVs, undefined);
+});
+
 console.log(results.join("\n"));
 console.log("\n" + passed + " / " + results.length + " tests passed.");
