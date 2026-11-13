@@ -53,6 +53,7 @@
     if (typeof person === "string") return person;
     var n = person.name || "";
     var cid = person.classId;
+    if (person.dungeonId === "d3" || n === "灰门魔物" || n === "Ashgate Monster") return t("monster.name3");
     if (person.dungeonId === "d2" || n === "石门魔物 II" || n === "Stonegate Monster II" || n === "石门魔物二") return t("monster.name2");
     if (person.dungeonId === "d1" || n === "石门魔物 I" || n === "Stonegate Monster I" || n === "石门魔物一") return t("monster.name1");
     if (n === "石门骑士 柯刚" || n === "Stonegate Knight Kegang" || n === "石门魔物" || n === "Stonegate Monster") return t("monster.name");
@@ -85,6 +86,7 @@
   function wepLine(w, cur) {
     if (!w) return "";
     var line = t("wep.line", { mt: w.mt, hit: w.hit, wt: w.wt });
+    if (w.crit > 0) line += "　" + t("wep.crit", { crit: w.crit });
     var u = usesText(w, cur);
     if (u) line += "　" + u;
     if (typeof cur === "number" ? cur <= 0 : (typeof w.uses === "number" && w.uses <= 0)) {
@@ -275,8 +277,9 @@
         t(key, { weapon: weaponName(drop.weapon), name: drop.unit ? displayName(drop.unit) : "" }) +
         "</p>";
     }
-    addLoot(loot.copper || (!loot.silver && v.drop ? v.drop : null), "dungeon.lootCopper");
+    addLoot(loot.copper || (!loot.silver && !loot.killer && v.drop ? v.drop : null), "dungeon.lootCopper");
     addLoot(loot.silver, "dungeon.lootSilver");
+    addLoot(loot.killer, "dungeon.lootKiller");
     if (loot.tome) dropLine += "<p class='loot-note'>" + t("dungeon.lootTome") + "</p>";
     openModal(
       panel(
@@ -343,7 +346,7 @@
     battleTimers = [];
   }
   function isMonsterArt(id) {
-    return id === "stonegate" || id === "axefiend";
+    return id === "stonegate" || id === "axefiend" || id === "ashgate";
   }
   function classArtId(person) {
     if (!person) return "sword";
@@ -479,7 +482,7 @@
   }
 
   function dungeonIds() {
-    return (D.DUNGEON_ORDER && D.DUNGEON_ORDER.length) ? D.DUNGEON_ORDER.slice() : ["d1", "d2"];
+    return (D.DUNGEON_ORDER && D.DUNGEON_ORDER.length) ? D.DUNGEON_ORDER.slice() : ["d1", "d2", "d3"];
   }
   function emptyDungeonTimes() {
     var o = {}, i, ids = dungeonIds();
@@ -1513,7 +1516,9 @@
     var w = D.WEAPONS[weaponId];
     var who = unit || active();
     var cls = who && D.CLASSES[who.classId];
-    return !!(w && cls && w.type === cls.weaponType);
+    if (!(w && cls && w.type === cls.weaponType)) return false;
+    if (w.promotedOnly && !who.promoted) return false;
+    return true;
   }
 
   function currentWeapon() {
@@ -1575,6 +1580,11 @@
     if (!u) return emptyDungeonTimes();
     if (!u[key] || typeof u[key] !== "object" || typeof u[key] === "number") {
       u[key] = migrateDungeonTimes(u[key]);
+    } else {
+      var ids = dungeonIds(), i;
+      for (i = 0; i < ids.length; i++) {
+        if (typeof u[key][ids[i]] !== "number") u[key][ids[i]] = 0;
+      }
     }
     return u[key];
   }
@@ -2068,9 +2078,9 @@
     }
     var id = b.id || dungeonId || "d1";
     return {
-      name: id === "d2" ? "石门魔物 II" : "石门魔物 I",
+      name: id === "d3" ? "灰门魔物" : id === "d2" ? "石门魔物 II" : "石门魔物 I",
       dungeonId: id,
-      artId: b.artId || (id === "d2" ? "axefiend" : "stonegate"),
+      artId: b.artId || (id === "d3" ? "ashgate" : id === "d2" ? "axefiend" : "stonegate"),
       classId: b.classId,
       className: b.className,
       level: b.level,
@@ -2265,7 +2275,7 @@
       );
     });
     var body =
-      "<p>" + t(dungeonId === "d2" ? "dungeon.roomLead2" : "dungeon.roomLead1") + "</p>" +
+      "<p>" + t(dungeonId === "d3" ? "dungeon.roomLead3" : dungeonId === "d2" ? "dungeon.roomLead2" : "dungeon.roomLead1") + "</p>" +
       (ready.length ? "" : "<p class='muted'>" + t("dungeon.allFought") + "</p>") +
       '<div class="boss-card">' +
       mugTag(b, true, "mug") +
@@ -2433,12 +2443,22 @@
     return grantCopperReward(ids, forcedId && D.WEAPONS[forcedId] ? forcedId : pool[rng().int(0, pool.length - 1)]);
   }
 
+  function grantKillerReward(ids, forcedId) {
+    var pool = D.KILLER_REWARDS || ["killer-sword", "killer-lance", "killer-axe", "killer-bow"];
+    return grantCopperReward(ids, forcedId && D.WEAPONS[forcedId] ? forcedId : pool[rng().int(0, pool.length - 1)]);
+  }
+
   function finishDungeonWin(forcedSilver) {
     var ids = dungeonRun ? dungeonRun.ids : state.party.map(function (p) { return p.id; });
     var loot = (dungeonRun && dungeonRun.loot) ? dungeonRun.loot : {};
     var dungeonId = dungeonRun ? dungeonRun.dungeonId : pendingDungeonId;
     var def = dungeonDef(dungeonId);
-    if (def.reward === "copper" || dungeonId === "d1") {
+    if (def.reward === "killer") {
+      if (!loot.killer) {
+        loot.killer = grantKillerReward(ids, forcedSilver || state._forceKiller || null);
+        state._forceKiller = null;
+      }
+    } else if (def.reward === "copper" || dungeonId === "d1") {
       if (!loot.copper) {
         loot.copper = grantCopperReward(ids, state._forceCopper || null);
         state._forceCopper = null;
@@ -2461,7 +2481,7 @@
     closeBattle();
     renderHud();
     save();
-    lastVictory = { goldGain: 0, loot: loot, drop: loot.silver || loot.copper || null, dungeonId: endedId };
+    lastVictory = { goldGain: 0, loot: loot, drop: loot.silver || loot.copper || loot.killer || null, dungeonId: endedId };
     renderDungeonWin();
   }
 
@@ -2696,8 +2716,17 @@
 
   function openShop() {
     var p = active();
-    var irons = D.SHOP_WEAPONS || D.IRON_WEAPONS;
-    var rows = irons.map(function (id) {
+    var shopIds = D.SHOP_WEAPONS || D.IRON_WEAPONS;
+    var ironIds = [];
+    var killerIds = [];
+    var si, sw;
+    for (si = 0; si < shopIds.length; si++) {
+      sw = D.WEAPONS[shopIds[si]];
+      if (!sw) continue;
+      if (sw.promotedOnly) killerIds.push(shopIds[si]);
+      else ironIds.push(shopIds[si]);
+    }
+    function shopWeaponRow(id) {
       var w = D.WEAPONS[id];
       if (!w) return "";
       var owned = p.weapons.indexOf(id) !== -1;
@@ -2721,7 +2750,11 @@
             '">' + t("ui.ok") + "</button>") +
         "</div>"
       );
-    }).join("");
+    }
+    var rows = ironIds.map(shopWeaponRow).join("");
+    if (killerIds.length) {
+      rows += "<p class='muted'>" + t("shop.killerLead") + "</p>" + killerIds.map(shopWeaponRow).join("");
+    }
     var writ = D.ITEMS.challengeWrit;
     var writPoor = state.gold < writ.cost;
     var writRow =
@@ -3188,7 +3221,7 @@
         );
       })
       .join("");
-    var promoDisabled = tomes <= 0 || p.promoted || p.level < 10;
+    var promoDisabled = tomes <= 0 || p.promoted || p.level < D.PROMO_MIN_LEVEL;
     var body =
       "<p>" +
       t("bag.weaponsOf", { name: displayName(p), count: tonic }) +
@@ -3255,6 +3288,7 @@
       "<span class='k'>" + t("stats.weapon") + "</span><span>" +
       weaponName(w) +
       t("wep.paren", { mt: w.mt, hit: w.hit, wt: w.wt }) +
+      (w && w.crit > 0 ? "　" + t("wep.crit", { crit: w.crit }) : "") +
       (w && usesText(w) ? "　" + usesText(w) : "") +
       "</span>" +
       "<span class='k'>" + t("stats.atk") + "</span><span>" +
@@ -4298,7 +4332,7 @@
   function promoteUnit(u) {
     var promo = u && D.PROMOTIONS[u.classId];
     var k, i;
-    if (!promo || u.promoted || u.level < 10) return false;
+    if (!promo || u.promoted || u.level < D.PROMO_MIN_LEVEL) return false;
     for (i = 0; i < STAT_KEYS.length; i++) {
       k = STAT_KEYS[i];
       if (!promo[k]) continue;
@@ -4342,7 +4376,7 @@
         if (!silent) toast(t("bag.promoAlready"));
         return;
       }
-      if (p.level < 10) {
+      if (p.level < D.PROMO_MIN_LEVEL) {
         if (!silent) toast(t("bag.promoNeedLv"));
         return;
       }
@@ -4600,7 +4634,7 @@
       return drop && drop.weapon ? { weapon: weaponName(drop.weapon), unit: drop.unit && displayName(drop.unit) } : null;
     },
     previewVictory: function (weaponId, dungeonId) {
-      var id = dungeonId || (weaponId && String(weaponId).indexOf("copper") === 0 ? "d1" : "d2");
+      var id = dungeonId || (weaponId && String(weaponId).indexOf("copper") === 0 ? "d1" : (weaponId && String(weaponId).indexOf("killer") === 0 ? "d3" : "d2"));
       pendingDungeonId = id;
       if (!dungeonRun) {
         dungeonRun = {
@@ -4619,6 +4653,8 @@
         if (!dungeonRun.loot) dungeonRun.loot = {};
         dungeonRun.loot.copper = grantCopperReward(dungeonRun.ids, weaponId);
         finishDungeonWin();
+      } else if (id === "d3" || (weaponId && String(weaponId).indexOf("killer") === 0)) {
+        finishDungeonWin(weaponId || null);
       } else if (id === "d1") {
         finishDungeonWin();
       } else {

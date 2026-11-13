@@ -97,9 +97,9 @@
     return luck;
   }
 
-  /** 必杀率 = floor(技术 / 2) - 对方必杀回避，再夹取到 0–100 */
-  function critRate(skill, defenderCritAvoid) {
-    return clampRate(Math.floor(skill / 2) - defenderCritAvoid);
+  /** 必杀率 = floor(技术 / 2) + 武器必杀 - 对方必杀回避，再夹取到 0–100 */
+  function critRate(skill, defenderCritAvoid, weaponCrit) {
+    return clampRate(Math.floor(skill / 2) + (weaponCrit || 0) - defenderCritAvoid);
   }
 
   /** 攻速至少高出对方 4 点（差值 ≥ 4）时可追击；差 3 不可追击 */
@@ -226,7 +226,7 @@
       maxHp: self.maxHp,
       damage: damage(atk, foe.def),
       hit: Math.floor(clampRate(rawHit(self, foe, t.hit))),
-      crit: critRate(self.skill, critAvoid(foe.luck)),
+      crit: critRate(self.skill, critAvoid(foe.luck), self.weapon && self.weapon.crit),
       followUp: hasFollowUp(self.as, foe.as),
       as: self.as,
       atk: atk,
@@ -256,7 +256,7 @@
     if (hitRoll >= threshold) {
       return { result: "miss", hit: false, crit: false, damage: 0, hitRoll: hitRoll, threshold: threshold };
     }
-    var crit = critRate(attacker.skill, critAvoid(defender.luck));
+    var crit = critRate(attacker.skill, critAvoid(defender.luck), attacker.weapon && attacker.weapon.crit);
     var critRoll = rng.int(0, 99);
     var isCrit = critRoll < crit;
     var dealt = isCrit ? critDamage(dmg) : dmg;
