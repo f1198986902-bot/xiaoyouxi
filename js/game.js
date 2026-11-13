@@ -74,6 +74,7 @@
     if (id === "tonic") return t("item.tonic");
     if (id === "promoBook") return t("item.promoBook");
     if (id === "challengeWrit") return t("item.challengeWrit");
+    if (id === "dungeonReset") return t("item.dungeonReset");
     return (typeof it === "object" && it.name) ? it.name : String(it);
   }
   function usesText(w, cur) {
@@ -723,7 +724,7 @@
       party: D.PARTY_ORDER.map(function (id) { return newUnit(D.CLASSES[id].name, id, id); }),
       activeId: D.PARTY_ORDER[0],
       gold: D.START_GOLD,
-      items: { tonic: 0, promoBook: 0, challengeWrit: 0 },
+      items: { tonic: 0, promoBook: 0, challengeWrit: 0, dungeonReset: 0 },
       weaponBag: [],
       day: 1,
       period: 0,
@@ -787,9 +788,9 @@
       if (!party.length) return null;
       for (i = 0; i < party.length; i++) ensureLanceLoadout(party[i]);
 
-      var items = { tonic: 0, promoBook: 0, challengeWrit: 0 };
+      var items = { tonic: 0, promoBook: 0, challengeWrit: 0, dungeonReset: 0 };
       src = data.items || (data.player && data.player.items) || {};
-      ["tonic", "promoBook", "challengeWrit"].forEach(function (k) {
+      ["tonic", "promoBook", "challengeWrit", "dungeonReset"].forEach(function (k) {
         if (typeof src[k] === "number" && src[k] > 0) items[k] = Math.floor(src[k]);
       });
 
@@ -1776,6 +1777,30 @@
   function clearArenaFought(u) {
     if (!u) return;
     u.arenaFoughtUntil = 0;
+  }
+
+  function hasDungeonLockout(u, now) {
+    now = now || Date.now();
+    if (!u) return false;
+    clearLockIfDue(u, now);
+    clearFoughtIfDue(u, now);
+    var ids = dungeonIds(), i, id;
+    for (i = 0; i < ids.length; i++) {
+      id = ids[i];
+      if (timeAt(u, "dungeonLockUntil", id) > now) return true;
+      if (timeAt(u, "dungeonFoughtUntil", id) > now) return true;
+    }
+    return false;
+  }
+
+  function clearDungeonLockouts(u) {
+    if (!u) return;
+    var ids = dungeonIds(), i, id;
+    for (i = 0; i < ids.length; i++) {
+      id = ids[i];
+      setTimeAt(u, "dungeonLockUntil", id, 0);
+      setTimeAt(u, "dungeonFoughtUntil", id, 0);
+    }
   }
 
   function isDungeonLocked(u, now, dungeonId) {
@@ -3466,6 +3491,7 @@
     var tonic = (state.items && state.items.tonic) || 0;
     var tomes = (state.items && state.items.promoBook) || 0;
     var writs = (state.items && state.items.challengeWrit) || 0;
+    var resets = (state.items && state.items.dungeonReset) || 0;
     var equipped = "";
     var bagRows;
     if (p.weaponId && D.WEAPONS[p.weaponId]) {
@@ -3497,6 +3523,9 @@
       '<button type="button" class="btn" data-act="use-item" data-id="challengeWrit"' +
       (writs <= 0 ? " disabled" : "") +
       ">" + t("bag.useWrit") + " ×" + writs + "</button>" +
+      '<button type="button" class="btn" data-act="use-item" data-id="dungeonReset"' +
+      (resets <= 0 ? " disabled" : "") +
+      ">" + t("bag.useDungeonReset") + " ×" + resets + "</button>" +
       "</div>" +
       "<h3 style='font-size:1em;letter-spacing:.12em;margin:.8em 0 .3em'>" + t("bag.equippedHeading", { name: displayName(p) }) + "</h3>" +
       '<div class="list">' +
@@ -4200,6 +4229,7 @@
     var note = "";
 
     var rewardLine = t("battle.noReward");
+    var lootNote = "";
     if (ctx.kind === "train") {
       var hpGain = p.maxHp - ctx.preMax;
       p.hp = Math.min(p.maxHp, ctx.preHp + hpGain);
@@ -4223,6 +4253,10 @@
           personal: currentPersonalPoints(),
           guild: currentGuildPoints()
         });
+        if (Math.random() * 100 < (D.ARENA_DUNGEON_RESET_CHANCE != null ? D.ARENA_DUNGEON_RESET_CHANCE : 3)) {
+          state.items.dungeonReset = (state.items.dungeonReset || 0) + 1;
+          lootNote = "<p class='loot-note'>" + t("arena.lootReset") + "</p>";
+        }
       } else {
         if (p.hp < 1) p.hp = 0;
         note = timeout ? t("battle.timeout") : t("arena.lose");
@@ -4256,6 +4290,7 @@
       note +
       "</p>" +
       (rewardLine ? "<p>" + rewardLine + "</p>" : "") +
+      lootNote +
       '<div class="actions"><button type="button" class="btn btn-gold" data-act="battle-done">' +
       t("ui.confirm") +
       "</button></div></div>";
@@ -4661,6 +4696,20 @@
       state.items.challengeWrit -= 1;
       clearArenaFought(p);
       if (!silent) toast(t("bag.writUsed", { name: displayName(p) }));
+      save();
+      renderHud();
+      if (!silent && $("#modal") && $("#modal").dataset.view === "bag") openBag();
+      return;
+    }
+    if (id === "dungeonReset") {
+      if (!(state.items.dungeonReset > 0)) return;
+      if (!hasDungeonLockout(p)) {
+        if (!silent) toast(t("bag.dungeonResetFull", { name: displayName(p) }));
+        return;
+      }
+      state.items.dungeonReset -= 1;
+      clearDungeonLockouts(p);
+      if (!silent) toast(t("bag.dungeonResetUsed", { name: displayName(p) }));
       save();
       renderHud();
       if (!silent && $("#modal") && $("#modal").dataset.view === "bag") openBag();
