@@ -669,10 +669,10 @@ function rngConst(v) {
   };
 }
 
-test("重甲兵专属加成为生命 +2，基础值已计入", function () {
-  assert.deepStrictEqual(D.CLASSES.armor.bonus, { hp: 2 });
+test("重甲兵基础生命为 22，无职业专属加成字段", function () {
+  assert.strictEqual(D.CLASSES.armor.bonus, undefined);
   assert.deepStrictEqual(D.CLASSES.armor.bases, {
-    hp: 24,
+    hp: 22,
     str: 6,
     skill: 3,
     spd: 2,
@@ -681,6 +681,15 @@ test("重甲兵专属加成为生命 +2，基础值已计入", function () {
   });
   assert.strictEqual(D.BATTLE_MAX_ROUNDS, 15);
   assert.strictEqual(C.BATTLE_MAX_ROUNDS, 15);
+});
+
+test("每日收益与训练费用为 2100 × 等级 / (等级 + 20)，1 级为 100", function () {
+  assert.strictEqual(D.INCOME_SCALE, 2100);
+  assert.strictEqual(D.dailyIncome(1), 100);
+  assert.strictEqual(D.trainCost(1), 100);
+  assert.strictEqual(D.dailyIncome(2), 190.91);
+  assert.strictEqual(D.GOLD_BONUS, 0);
+  assert.strictEqual(D.GUILD_GOLD_BONUS, 0);
 });
 
 test("untilDown 在 15 回合双方仍存活时先手判定失败", function () {
