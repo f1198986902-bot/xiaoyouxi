@@ -87,12 +87,29 @@
     if (!w) return "";
     var line = t("wep.line", { mt: w.mt, hit: w.hit, wt: w.wt });
     if (w.crit > 0) line += "　" + t("wep.crit", { crit: w.crit });
+    var eff = effectiveVsText(w);
+    if (eff) line += "　" + eff;
     var u = usesText(w, cur);
     if (u) line += "　" + u;
     if (typeof cur === "number" ? cur <= 0 : (typeof w.uses === "number" && w.uses <= 0)) {
       line += "　" + t("wep.broken");
     }
     return line;
+  }
+  function effectiveVsText(w) {
+    var vs = w && w.effectiveVs;
+    var names = [];
+    var i, cid, promo;
+    if (!vs) return "";
+    if (typeof vs === "string") vs = [vs];
+    for (i = 0; i < vs.length; i++) {
+      cid = vs[i];
+      if (D.CLASSES[cid]) names.push(t("class." + cid));
+      promo = D.PROMOTIONS && D.PROMOTIONS[cid];
+      if (promo) names.push(t("promo." + promo.id));
+    }
+    if (!names.length) return "";
+    return t("wep.effective", { targets: names.join(" / ") });
   }
   function setView(view) {
     activeUi = view || null;
@@ -656,12 +673,56 @@
     if (u.weaponUses[start] == null) u.weaponUses[start] = D.weaponMaxUses(start);
   }
 
+  function normalizeWeaponBag(raw) {
+    var bag = [];
+    var i, item, id, max, uses;
+    if (!Array.isArray(raw)) return bag;
+    for (i = 0; i < raw.length; i++) {
+      item = raw[i];
+      if (!item) continue;
+      id = typeof item === "string" ? item : item.id;
+      if (!id || !D.WEAPONS[id]) continue;
+      max = D.weaponMaxUses(id);
+      uses = max;
+      if (item && typeof item.uses === "number" && isFinite(item.uses)) {
+        uses = C.clamp(Math.floor(item.uses), 0, max || Math.floor(item.uses));
+      }
+      bag.push({ id: id, uses: uses });
+    }
+    return bag;
+  }
+
+  function moveUnequippedWeaponsToBag(u, bag) {
+    var keep, i, id, uses, next;
+    if (!u) return;
+    keep = u.weaponId && D.WEAPONS[u.weaponId] ? u.weaponId : null;
+    if (!Array.isArray(u.weapons)) u.weapons = keep ? [keep] : [];
+    if (!u.weaponUses) u.weaponUses = {};
+    for (i = 0; i < u.weapons.length; i++) {
+      id = u.weapons[i];
+      if (!D.WEAPONS[id]) continue;
+      if (keep && id === keep) continue;
+      uses = usesOf(u, id);
+      bag.push({ id: id, uses: uses });
+      if (Object.prototype.hasOwnProperty.call(u.weaponUses, id)) delete u.weaponUses[id];
+    }
+    u.weapons = keep ? [keep] : [];
+    next = {};
+    if (keep) {
+      if (typeof u.weaponUses[keep] === "number") next[keep] = u.weaponUses[keep];
+      else next[keep] = D.weaponMaxUses(keep);
+    }
+    u.weaponUses = next;
+    if (keep) u.weaponId = keep;
+  }
+
   function emptyState() {
     return {
       party: D.PARTY_ORDER.map(function (id) { return newUnit(D.CLASSES[id].name, id, id); }),
       activeId: D.PARTY_ORDER[0],
       gold: D.START_GOLD,
       items: { tonic: 0, promoBook: 0, challengeWrit: 0 },
+      weaponBag: [],
       day: 1,
       period: 0,
       quests: [],
@@ -736,6 +797,9 @@
       }
       if (!activeId) activeId = party[0].id;
 
+      var weaponBag = normalizeWeaponBag(data.weaponBag);
+      for (i = 0; i < party.length; i++) moveUnequippedWeaponsToBag(party[i], weaponBag);
+
       var day = typeof data.day === "number" ? Math.max(1, Math.floor(data.day)) : 1;
       var period = typeof data.period === "number" ? C.clamp(Math.floor(data.period), 0, 2) : 0;
       var lastTick = typeof data.lastGoldTick === "number" ? data.lastGoldTick : Date.now();
@@ -749,6 +813,7 @@
         activeId: activeId,
         gold: gold,
         items: items,
+        weaponBag: weaponBag,
         day: day,
         period: period,
         quests: Array.isArray(data.quests) ? data.quests : [],
@@ -848,15 +913,22 @@
     u.weaponUses[weaponId] = C.clamp(Math.floor(n), 0, max || Math.floor(n));
   }
 
-  function grantWeapon(u, weaponId) {
-    if (!u || !D.WEAPONS[weaponId]) return false;
-    if (u.weapons.indexOf(weaponId) === -1) {
-      u.weapons.push(weaponId);
-      setUses(u, weaponId, D.weaponMaxUses(weaponId));
-    } else if (!u.weaponUses || u.weaponUses[weaponId] == null) {
-      setUses(u, weaponId, D.weaponMaxUses(weaponId));
+  function grantWeaponToBag(weaponId, usesLeft) {
+    var max, uses;
+    if (!D.WEAPONS[weaponId]) return false;
+    if (!state) return false;
+    if (!state.weaponBag) state.weaponBag = [];
+    max = D.weaponMaxUses(weaponId);
+    uses = max;
+    if (typeof usesLeft === "number" && isFinite(usesLeft)) {
+      uses = C.clamp(Math.floor(usesLeft), 0, max || Math.floor(usesLeft));
     }
+    state.weaponBag.push({ id: weaponId, uses: uses });
     return true;
+  }
+
+  function grantWeapon(u, weaponId) {
+    return grantWeaponToBag(weaponId);
   }
 
   function isWeaponBroken(u, weaponId) {
@@ -1707,7 +1779,9 @@
   function canDungeonFight(u, now, dungeonId) {
     now = now || Date.now();
     dungeonId = dungeonId || currentDungeonId();
-    return !!(u && u.hp > 0 && !isDungeonLocked(u, now, dungeonId) && !isDungeonFought(u, now, dungeonId));
+    if (!u || u.hp <= 0) return false;
+    if (dungeonId === "d3" && !u.promoted) return false;
+    return !isDungeonLocked(u, now, dungeonId) && !isDungeonFought(u, now, dungeonId);
   }
 
   function lockUnit(u, now, dungeonId) {
@@ -1736,6 +1810,7 @@
 
   function dungeonLimitLabel(u, dungeonId) {
     dungeonId = dungeonId || currentDungeonId();
+    if (dungeonId === "d3" && u && !u.promoted) return t("dungeon.needPromo");
     if (isDungeonLocked(u, Date.now(), dungeonId)) return lockoutLabel(u, dungeonId);
     if (isDungeonFought(u, Date.now(), dungeonId)) return t("lock.fought");
     if (u && u.hp <= 0) return t("lock.noHp");
@@ -1877,10 +1952,6 @@
       '</button></div>' +
       '<div class="hud-side"><div class="hud-meta"><div class="place">' +
       (TownMap.currentMap && TownMap.currentMap() === "wilds" ? t("place.wildsMap") : t("place.town")) +
-      "</div><div>" +
-      t("hud.day", { day: pDay() }) +
-      "　" +
-      periodName() +
       '</div><div class="gold">' +
       t("hud.gold") +
       "　" +
@@ -2225,11 +2296,21 @@
   }
 
   function startDungeonRun(ids) {
+    var dungeonId = pendingDungeonId || "d1";
+    if (dungeonId === "d3") {
+      ids = (ids || []).filter(function (uid) {
+        var u = unitById(uid);
+        return u && u.promoted;
+      });
+      if (!ids.length) {
+        toast(t("dungeon.needPromo"));
+        return;
+      }
+    }
     if (!ids || !ids.length) {
       toast(t("dungeon.needUnit"));
       return;
     }
-    var dungeonId = pendingDungeonId || "d1";
     var def = dungeonDef(dungeonId);
     var weaponId = def.weaponPool === "iron" ? randomIronWeaponId() : def.weaponId;
     dungeonEndReason = null;
@@ -2475,23 +2556,8 @@
   function grantCopperReward(ids, forcedId) {
     var pool = D.COPPER_REWARDS;
     var pick = forcedId && D.WEAPONS[forcedId] ? forcedId : pool[rng().int(0, pool.length - 1)];
-    var w = D.copyWeapon(pick);
-    var living = [];
-    var i, u, usable, target;
-    ids = ids || [];
-    for (i = 0; i < ids.length; i++) {
-      u = unitById(ids[i]);
-      if (u && u.hp > 0) living.push(u);
-    }
-    usable = [];
-    for (i = 0; i < living.length; i++) {
-      if (D.CLASSES[living[i].classId].weaponType === w.type) usable.push(living[i]);
-    }
-    target = usable[0] || living[0] || (ids[0] ? unitById(ids[0]) : state.party[0]);
-    if (!target) return { weapon: w, unit: null };
-    grantWeapon(target, pick);
-    w = D.copyWeapon(pick, usesOf(target, pick));
-    return { weapon: w, unit: target };
+    grantWeaponToBag(pick);
+    return { weapon: D.copyWeapon(pick), unit: null };
   }
 
   function grantSilverReward(ids, forcedId) {
@@ -2500,7 +2566,8 @@
   }
 
   function grantKillerReward(ids, forcedId) {
-    var pool = D.KILLER_REWARDS || ["killer-sword", "killer-lance", "killer-axe", "killer-bow"];
+    var pool = D.D3_REWARDS || (D.KILLER_REWARDS || []).concat(D.SLAYER_REWARDS || []);
+    if (!pool.length) pool = ["killer-sword", "killer-lance", "killer-axe", "killer-bow"];
     return grantCopperReward(ids, forcedId && D.WEAPONS[forcedId] ? forcedId : pool[rng().int(0, pool.length - 1)]);
   }
 
@@ -2523,7 +2590,7 @@
       if (!loot.silver) {
         loot.silver = grantSilverReward(ids, forcedSilver || state._forceSilver || null);
         state._forceSilver = null;
-        if (state._forceTome === true || (state._forceTome !== false && rng().int(0, 99) < 50)) {
+        if (state._forceTome === true || (state._forceTome !== false && rng().int(0, 99) < (D.TOME_DROP_CHANCE != null ? D.TOME_DROP_CHANCE : 20))) {
           if (!state.items) state.items = {};
           state.items.promoBook = (state.items.promoBook || 0) + 1;
           loot.tome = true;
@@ -2786,11 +2853,9 @@
     function shopWeaponRow(id) {
       var w = D.WEAPONS[id];
       if (!w) return "";
-      var owned = p.weapons.indexOf(id) !== -1;
-      var usable = canUseWeapon(id, p);
       var poor = state.gold < w.cost;
-      var disabled = owned || !usable || poor;
-      var why = owned ? t("shop.owned") : (!usable ? t("shop.cantUse") : (poor ? t("goldShort") : ""));
+      var disabled = poor;
+      var why = poor ? t("goldShort") : "";
       return (
         '<div class="list-item shop-item"><div class="info"><h4>' +
         weaponName(w) +
@@ -2925,37 +2990,76 @@
     setView("statue");
   }
 
+  function listDamagedWeapons() {
+    var out = [];
+    var i, u, id, max, left, bag, inst;
+    if (!state) return out;
+    for (i = 0; i < state.party.length; i++) {
+      u = state.party[i];
+      id = u && u.weaponId;
+      if (!id || !D.WEAPONS[id]) continue;
+      max = D.weaponMaxUses(id);
+      left = usesOf(u, id);
+      if (left < max) out.push({ kind: "unit", unit: u, id: id, left: left, max: max });
+    }
+    bag = state.weaponBag || [];
+    for (i = 0; i < bag.length; i++) {
+      inst = bag[i];
+      if (!inst || !D.WEAPONS[inst.id]) continue;
+      max = D.weaponMaxUses(inst.id);
+      left = typeof inst.uses === "number" ? inst.uses : max;
+      if (left < max) out.push({ kind: "bag", index: i, id: inst.id, left: left, max: max });
+    }
+    return out;
+  }
+
+  function repairRowHtml(title, id, left, full, action, attrs) {
+    var cost = D.REPAIR_COST || 5;
+    var poor = state.gold < cost;
+    var w = D.copyWeapon(id, left);
+    return (
+      '<div class="list-item"><div class="info"><h4>' +
+      title +
+      "</h4><p>" +
+      wepLine(w, left) +
+      (full ? "　" + t("smithy.full") : "") +
+      '</p></div>' +
+      (full || poor
+        ? ""
+        : '<button type="button" class="btn" data-act="' +
+          action +
+          '" ' +
+          attrs +
+          ">" +
+          t("smithy.repair") +
+          "</button>") +
+      "</div>"
+    );
+  }
+
   function openBank() {
     var cost = D.REPAIR_COST || 5;
+    var damaged = listDamagedWeapons();
+    var allCost = damaged.length * cost;
     var groups = partyGroups(state.party).map(function (g) {
       var blocks = g.units.map(function (u) {
-        var rows = u.weapons.map(function (id) {
-          if (!D.WEAPONS[id]) return "";
-          var max = D.weaponMaxUses(id);
-          var left = usesOf(u, id);
-          var full = left >= max;
-          var poor = state.gold < cost;
-          var w = D.copyWeapon(id, left);
-          return (
-            '<div class="list-item"><div class="info"><h4>' +
-            weaponName(id) +
-            (u.weaponId === id ? t("ui.equipped") : "") +
-            "</h4><p>" +
-            wepLine(w, left) +
-            (full ? "　" + t("smithy.full") : "") +
-            '</p></div>' +
-            (full || poor
-              ? ""
-              : '<button type="button" class="btn" data-act="repair" data-unit="' +
-                esc(u.id) +
-                '" data-id="' +
-                id +
-                '">' +
-                t("smithy.repair") +
-                "</button>") +
-            "</div>"
+        var id = u.weaponId;
+        var max, left, full, rows;
+        if (!id || !D.WEAPONS[id]) {
+          rows = "<p class='muted'>" + t("smithy.none") + "</p>";
+        } else {
+          max = D.weaponMaxUses(id);
+          left = usesOf(u, id);
+          full = left >= max;
+          rows = repairRowHtml(
+            weaponName(id) + t("ui.equipped"),
+            id,
+            left,
+            full,
+            "repair",
+            'data-unit="' + esc(u.id) + '" data-id="' + id + '"'
           );
-        }).join("");
+        }
         return (
           '<div class="repair-group"><div class="repair-group-head">' +
           esc(displayName(u)) +
@@ -2970,12 +3074,42 @@
       }).join("");
       return blocks;
     }).join("");
+    var bag = state.weaponBag || [];
+    var bagRows = bag.map(function (inst, idx) {
+      if (!inst || !D.WEAPONS[inst.id]) return "";
+      var max = D.weaponMaxUses(inst.id);
+      var left = typeof inst.uses === "number" ? inst.uses : max;
+      return repairRowHtml(
+        weaponName(inst.id),
+        inst.id,
+        left,
+        left >= max,
+        "repair-bag",
+        'data-index="' + idx + '" data-id="' + inst.id + '"'
+      );
+    }).join("");
+    var repairAllBtn = "";
+    if (damaged.length) {
+      repairAllBtn =
+        "<p><button type='button' class='btn btn-gold' data-act='repair-all'>" +
+        t("smithy.repairAll") +
+        "　" +
+        t("smithy.repairAllCost", { count: damaged.length, cost: allCost }) +
+        "</button></p>";
+    } else {
+      repairAllBtn = "<p class='muted'>" + t("smithy.full") + "</p>";
+    }
     var body =
       "<p class='lead'>" + t("smithy.lead") + "</p>" +
       "<p>" + t("smithy.gold", { gold: formatGold(state.gold) }) + "</p>" +
       "<p class='muted'>" + t("smithy.repairCost", { cost: cost }) + "</p>" +
+      repairAllBtn +
       '<div class="repair-list">' +
       (groups || "<p class='muted'>" + t("smithy.none") + "</p>") +
+      "</div>" +
+      "<h3 style='font-size:1em;letter-spacing:.12em;margin:.8em 0 .3em'>" + t("bag.partyBag") + "</h3>" +
+      '<div class="repair-list">' +
+      (bagRows || "<p class='muted'>" + t("bag.empty") + "</p>") +
       "</div>" +
       actions({ leave: t("ui.leave") });
     openModal(panel(t("smithy.title"), body, "wide"));
@@ -2997,6 +3131,51 @@
     addGold(-cost);
     setUses(u, weaponId, max);
     toast(t("smithy.repaired", { name: displayName(u), weapon: weaponName(weaponId) }));
+    renderHud();
+    save();
+    openBank();
+  }
+
+  function repairBagWeapon(index) {
+    var cost = D.REPAIR_COST || 5;
+    var bag = state.weaponBag || [];
+    var inst, max, left;
+    index = Number(index);
+    if (index < 0 || index >= bag.length) return;
+    inst = bag[index];
+    if (!inst || !D.WEAPONS[inst.id]) return;
+    max = D.weaponMaxUses(inst.id);
+    left = typeof inst.uses === "number" ? inst.uses : max;
+    if (left >= max) return;
+    if (state.gold < cost) {
+      toast(t("smithy.poor"));
+      return;
+    }
+    addGold(-cost);
+    inst.uses = max;
+    toast(t("smithy.repairedBag", { weapon: weaponName(inst.id) }));
+    renderHud();
+    save();
+    openBank();
+  }
+
+  function repairAllWeapons() {
+    var cost = D.REPAIR_COST || 5;
+    var damaged = listDamagedWeapons();
+    var total, i, item;
+    if (!damaged.length) return;
+    total = damaged.length * cost;
+    if (state.gold < total) {
+      toast(t("smithy.poorAll", { count: damaged.length, cost: total }));
+      return;
+    }
+    addGold(-total);
+    for (i = 0; i < damaged.length; i++) {
+      item = damaged[i];
+      if (item.kind === "unit") setUses(item.unit, item.id, item.max);
+      else if (state.weaponBag && state.weaponBag[item.index]) state.weaponBag[item.index].uses = item.max;
+    }
+    toast(t("smithy.repairedAll", { count: damaged.length }));
     renderHud();
     save();
     openBank();
@@ -3252,32 +3431,41 @@
     openPersonalBoard(true);
   }
 
+  function weaponItemHtml(id, left, heading, buttonHtml) {
+    var w = D.copyWeapon(id, left);
+    if (!w) return "";
+    return (
+      '<div class="list-item"><div class="info"><h4>' +
+      weaponName(w) +
+      heading +
+      (left <= 0 ? "　" + t("wep.broken") : "") +
+      "</h4><p>" +
+      wepLine(w, left) +
+      "</p></div>" +
+      (buttonHtml || "") +
+      "</div>"
+    );
+  }
+
   function openBag() {
     var p = active();
     var tonic = (state.items && state.items.tonic) || 0;
     var tomes = (state.items && state.items.promoBook) || 0;
     var writs = (state.items && state.items.challengeWrit) || 0;
-    var wpn = p.weapons
-      .map(function (id) {
-        var w = D.copyWeapon(id, usesOf(p, id));
-        if (!w) return "";
-        var eq = p.weaponId === id;
-        var left = usesOf(p, id);
-        return (
-          '<div class="list-item"><div class="info"><h4>' +
-          weaponName(w) +
-          (eq ? t("ui.equipped") : "") +
-          (left <= 0 ? "　" + t("wep.broken") : "") +
-          "</h4><p>" +
-          wepLine(w, left) +
-          "</p></div>" +
-          (eq || !canUseWeapon(id, p)
-            ? ""
-            : '<button type="button" class="btn" data-act="equip" data-id="' + id + '">' + t("ui.equip") + "</button>") +
-          "</div>"
-        );
-      })
-      .join("");
+    var equipped = "";
+    var bagRows;
+    if (p.weaponId && D.WEAPONS[p.weaponId]) {
+      equipped = weaponItemHtml(p.weaponId, usesOf(p, p.weaponId), t("ui.equipped"), "");
+    }
+    bagRows = (state.weaponBag || []).map(function (inst, idx) {
+      var can, btn;
+      if (!inst || !D.WEAPONS[inst.id]) return "";
+      can = canUseWeapon(inst.id, p);
+      btn = can
+        ? '<button type="button" class="btn" data-act="equip-bag" data-index="' + idx + '">' + t("ui.equip") + "</button>"
+        : "";
+      return weaponItemHtml(inst.id, typeof inst.uses === "number" ? inst.uses : D.weaponMaxUses(inst.id), "", btn);
+    }).join("");
     var promoDisabled = tomes <= 0 || p.promoted || p.level < D.PROMO_MIN_LEVEL;
     var body =
       "<p>" +
@@ -3296,13 +3484,41 @@
       (writs <= 0 ? " disabled" : "") +
       ">" + t("bag.useWrit") + " ×" + writs + "</button>" +
       "</div>" +
-      "<h3 style='font-size:1em;letter-spacing:.12em;margin:.8em 0 .3em'>" + t("bag.weaponsHeading") + "</h3>" +
+      "<h3 style='font-size:1em;letter-spacing:.12em;margin:.8em 0 .3em'>" + t("bag.equippedHeading", { name: displayName(p) }) + "</h3>" +
       '<div class="list">' +
-      wpn +
+      (equipped || "<p class='muted'>" + t("bag.noEquipped") + "</p>") +
+      "</div>" +
+      "<h3 style='font-size:1em;letter-spacing:.12em;margin:.8em 0 .3em'>" + t("bag.partyBag") + "</h3>" +
+      '<div class="list">' +
+      (bagRows || "<p class='muted'>" + t("bag.empty") + "</p>") +
       "</div>" +
       actions({ leave: t("ui.close") });
     openModal(panel(t("bag.title"), body));
     setView("bag");
+  }
+
+  function equipFromBag(index) {
+    var p = active();
+    var bag = state.weaponBag || [];
+    var item, prevId, prevUses;
+    index = Number(index);
+    if (!p || index < 0 || index >= bag.length) return;
+    item = bag[index];
+    if (!item || !canUseWeapon(item.id, p)) return;
+    state.weaponBag.splice(index, 1);
+    if (p.weaponId && D.WEAPONS[p.weaponId]) {
+      prevId = p.weaponId;
+      prevUses = usesOf(p, prevId);
+      state.weaponBag.push({ id: prevId, uses: prevUses });
+    }
+    p.weaponId = item.id;
+    p.weapons = [item.id];
+    p.weaponUses = {};
+    setUses(p, item.id, item.uses);
+    save();
+    toast(t("equipOk", { name: weaponName(item.id) }));
+    openBag();
+    renderHud();
   }
 
   function openStats() {
@@ -3346,6 +3562,7 @@
       weaponName(w) +
       t("wep.paren", { mt: w.mt, hit: w.hit, wt: w.wt }) +
       (w && w.crit > 0 ? "　" + t("wep.crit", { crit: w.crit }) : "") +
+      (w && effectiveVsText(w) ? "　" + effectiveVsText(w) : "") +
       (w && usesText(w) ? "　" + usesText(w) : "") +
       "</span>" +
       "<span class='k'>" + t("stats.atk") + "</span><span>" +
@@ -4207,6 +4424,10 @@
       renderHud();
       return;
     }
+    if (act === "equip-bag") {
+      equipFromBag(btn ? btn.getAttribute("data-index") : null);
+      return;
+    }
     if (act === "use-item") {
       useItem(id);
       return;
@@ -4338,6 +4559,14 @@
       repairWeapon(btn ? btn.getAttribute("data-unit") : null, id);
       return;
     }
+    if (act === "repair-bag") {
+      repairBagWeapon(btn ? btn.getAttribute("data-index") : null);
+      return;
+    }
+    if (act === "repair-all") {
+      repairAllWeapons();
+      return;
+    }
     if (act === "dungeon-win") {
       closeBattle();
       pendingBattle = null;
@@ -4373,16 +4602,13 @@
 
   function buyWeapon(id) {
     var w = D.WEAPONS[id];
-    var p = active();
-    if (!w || !canUseWeapon(id)) return;
-    if (p.weapons.indexOf(id) !== -1) return;
+    if (!w) return;
     if (state.gold < w.cost) {
       toast(t("goldShort"));
       return;
     }
     addGold(-w.cost);
-    grantWeapon(p, id);
-    p.weaponId = id;
+    grantWeaponToBag(id);
     save();
     renderHud();
     toast(t("buyWeapon", { name: weaponName(w) }));
@@ -4602,6 +4828,9 @@
         dungeon: dungeonRun
           ? { living: dungeonRun.living.slice(), bossHp: dungeonRun.boss.hp, ids: dungeonRun.ids.slice(), dungeonId: dungeonRun.dungeonId }
           : null,
+        weaponBag: (state.weaponBag || []).map(function (inst) {
+          return { id: inst.id, uses: inst.uses };
+        }),
         party: state.party.map(function (u) {
           return {
             id: u.id,
@@ -4691,10 +4920,10 @@
       var ids = classIds || state.party.map(function (u) { return u.id; });
       var drop = grantCopperReward(ids, id);
       save();
-      return drop && drop.weapon ? { weapon: weaponName(drop.weapon), unit: drop.unit && displayName(drop.unit) } : null;
+      return drop && drop.weapon ? { weapon: weaponName(drop.weapon), bag: true } : null;
     },
     previewVictory: function (weaponId, dungeonId) {
-      var id = dungeonId || (weaponId && String(weaponId).indexOf("copper") === 0 ? "d1" : (weaponId && String(weaponId).indexOf("killer") === 0 ? "d3" : "d2"));
+      var id = dungeonId || (weaponId && String(weaponId).indexOf("copper") === 0 ? "d1" : (weaponId && (String(weaponId).indexOf("killer") === 0 || String(weaponId).indexOf("slayer") === 0) ? "d3" : "d2"));
       pendingDungeonId = id;
       if (!dungeonRun) {
         dungeonRun = {
@@ -4713,7 +4942,7 @@
         if (!dungeonRun.loot) dungeonRun.loot = {};
         dungeonRun.loot.copper = grantCopperReward(dungeonRun.ids, weaponId);
         finishDungeonWin();
-      } else if (id === "d3" || (weaponId && String(weaponId).indexOf("killer") === 0)) {
+      } else if (id === "d3" || (weaponId && (String(weaponId).indexOf("killer") === 0 || String(weaponId).indexOf("slayer") === 0))) {
         finishDungeonWin(weaponId || null);
       } else if (id === "d1") {
         finishDungeonWin();

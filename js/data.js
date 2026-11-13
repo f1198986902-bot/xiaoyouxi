@@ -107,7 +107,12 @@
     "killer-sword": { id: "killer-sword", name: "必杀剑", type: "sword", mt: 9, hit: 75, crit: 30, wt: 7, uses: 20, cost: 1300, promotedOnly: true },
     "killer-lance": { id: "killer-lance", name: "必杀枪", type: "lance", mt: 10, hit: 70, crit: 30, wt: 9, uses: 20, cost: 1200, promotedOnly: true },
     "killer-axe": { id: "killer-axe", name: "必杀斧", type: "axe", mt: 11, hit: 65, crit: 30, wt: 11, uses: 20, cost: 1000, promotedOnly: true },
-    "killer-bow": { id: "killer-bow", name: "必杀弓", type: "bow", mt: 9, hit: 75, crit: 30, wt: 7, uses: 20, cost: 1400, promotedOnly: true }
+    "killer-bow": { id: "killer-bow", name: "必杀弓", type: "bow", mt: 9, hit: 75, crit: 30, wt: 7, uses: 20, cost: 1400, promotedOnly: true },
+    "slayer-armor": { id: "slayer-armor", name: "破甲剑", type: "sword", mt: 8, hit: 80, crit: 0, wt: 11, uses: 18, cost: 1260, effectiveVs: ["armor"] },
+    "slayer-sword": { id: "slayer-sword", name: "破剑斧", type: "axe", mt: 11, hit: 80, crit: 5, wt: 15, uses: 18, cost: 2000, effectiveVs: ["sword"] },
+    "slayer-axe": { id: "slayer-axe", name: "破斧枪", type: "lance", mt: 10, hit: 80, crit: 0, wt: 13, uses: 18, cost: 1600, effectiveVs: ["fighter"] },
+    "slayer-lance": { id: "slayer-lance", name: "破枪剑", type: "sword", mt: 9, hit: 80, crit: 0, wt: 11, uses: 18, cost: 1600, effectiveVs: ["cavalier"] },
+    "slayer-armor-lance": { id: "slayer-armor-lance", name: "破甲枪", type: "lance", mt: 9, hit: 70, crit: 0, wt: 14, uses: 16, cost: 1200, effectiveVs: ["armor"] }
   };
 
   /** 地下城一胜利时随机掉落的铜武器（不在商店出售）。 */
@@ -120,6 +125,12 @@
   var SHOP_WEAPONS = ["iron-sword", "iron-lance", "iron-axe", "iron-bow", "killer-sword", "killer-lance", "killer-axe", "killer-bow"];
   /** 地下城三胜利时随机掉落的必杀兵器。 */
   var KILLER_REWARDS = ["killer-sword", "killer-lance", "killer-axe", "killer-bow"];
+  /** 地下城三胜利时随机掉落的特效兵器（不在商店出售）。 */
+  var SLAYER_REWARDS = ["slayer-armor", "slayer-sword", "slayer-axe", "slayer-lance", "slayer-armor-lance"];
+  /** 地下城三奖励池：必杀与特效兵器合计，胜利时随机获得其中一把。 */
+  var D3_REWARDS = KILLER_REWARDS.concat(SLAYER_REWARDS);
+  /** 地下城二转职书掉落百分率（掷 0–99，小于该值则获得）。 */
+  var TOME_DROP_CHANCE = 20;
 
   var WEAPON_ORDER = [
     "iron-sword", "steel-sword", "slim-sword",
@@ -218,7 +229,7 @@
       def: 8,
       weaponId: "steel-axe",
       reward: "silver",
-      tomeChance: 50,
+      tomeChance: 20,
       rewardGold: 0,
       rewardExp: 0
     },
@@ -355,7 +366,8 @@
       cost: w.cost,
       uses: uses,
       maxUses: max,
-      promotedOnly: !!w.promotedOnly
+      promotedOnly: !!w.promotedOnly,
+      effectiveVs: Array.isArray(w.effectiveVs) ? w.effectiveVs.slice() : undefined
     };
   }
 
@@ -393,6 +405,9 @@
     IRON_WEAPONS: IRON_WEAPONS,
     SHOP_WEAPONS: SHOP_WEAPONS,
     KILLER_REWARDS: KILLER_REWARDS,
+    SLAYER_REWARDS: SLAYER_REWARDS,
+    D3_REWARDS: D3_REWARDS,
+    TOME_DROP_CHANCE: TOME_DROP_CHANCE,
     STATUE_LORE: STATUE_LORE,
     PERIODS: PERIODS,
     PARTY_ORDER: PARTY_ORDER,

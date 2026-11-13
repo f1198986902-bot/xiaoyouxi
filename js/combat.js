@@ -55,6 +55,19 @@
     return str + weaponMt + (triangleMt || 0);
   }
 
+  /** 特效：防守方 classId 在 weapon.effectiveVs 中时，威力先乘 3，再加力量与三角修正。 */
+  function isEffectiveVs(weapon, classId) {
+    var vs = weapon && weapon.effectiveVs;
+    if (!vs || !classId) return false;
+    if (typeof vs === "string") return vs === classId;
+    return vs.indexOf(classId) !== -1;
+  }
+
+  function weaponMtOf(weapon, defenderClassId) {
+    var mt = weapon && typeof weapon.mt === "number" ? weapon.mt : 0;
+    return isEffectiveVs(weapon, defenderClassId) ? mt * 3 : mt;
+  }
+
   /** 伤害 = max(0, 攻击力 - 对方守备) */
   function damage(atk, def) {
     return Math.max(0, atk - def);
@@ -187,6 +200,7 @@
       spd: unit.spd,
       luck: unit.luck,
       def: unit.def,
+      classId: unit.classId || "",
       weapon: w,
       as: as,
       atk: atk,
@@ -211,14 +225,14 @@
     var out = {};
     var k;
     for (k in self) if (Object.prototype.hasOwnProperty.call(self, k)) out[k] = self[k];
-    out.atk = attackPower(self.str, self.weapon.mt, t.mt);
+    out.atk = attackPower(self.str, weaponMtOf(self.weapon, foe.classId), t.mt);
     out.triangle = t;
     return out;
   }
 
   function sideForecast(self, foe) {
     var t = triangleBonus(self.weapon, foe.weapon);
-    var atk = attackPower(self.str, self.weapon.mt, t.mt);
+    var atk = attackPower(self.str, weaponMtOf(self.weapon, foe.classId), t.mt);
     return {
       name: self.name,
       className: self.className,
@@ -249,7 +263,7 @@
    */
   function resolveStrike(attacker, defender, rng) {
     var t = triangleBonus(attacker.weapon, defender.weapon);
-    var atk = attacker.triangle ? attacker.atk : attackPower(attacker.str, attacker.weapon.mt, t.mt);
+    var atk = attacker.triangle ? attacker.atk : attackPower(attacker.str, weaponMtOf(attacker.weapon, defender.classId), t.mt);
     var dmg = damage(atk, defender.def);
     var threshold = Math.floor(clampRate(rawHit(attacker, defender, t.hit)));
     var hitRoll = rng.int(0, 99);
@@ -370,6 +384,8 @@
     clamp: clamp,
     clampRate: clampRate,
     attackPower: attackPower,
+    isEffectiveVs: isEffectiveVs,
+    weaponMtOf: weaponMtOf,
     damage: damage,
     critDamage: critDamage,
     attackSpeed: attackSpeed,
